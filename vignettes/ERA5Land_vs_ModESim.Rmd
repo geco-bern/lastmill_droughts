@@ -7,6 +7,9 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Bern/Master thesis/R/lastmill_droughts")
+knitr::opts_knit$set(root.dir = "~/Bern/Master thesis/R/lastmill_droughts")
+
 ```
 
 ```{r libraries, message=FALSE, echo=FALSE}
@@ -23,10 +26,8 @@ library(maps)
 library(terra)
 library(rnaturalearth)
 library(sf)
-library(rgdal)
 library(sp)
 library(RColorBrewer)
-library(rJava)
 library(tidyverse)
 library(abind)
 library(patchwork)
@@ -1523,7 +1524,7 @@ ggplot() +
 ### read in IPCC Region information:
 #Load reference regions and coastlines:
 
-load("/storage/homefs/ph23v078/Reference_regions/IPCC-WGI-reference-regions-v4_R.rda", verbose = TRUE)
+load("data/Reference_regions/IPCC-WGI-reference-regions-v4_R.rda", verbose = TRUE)
 
 #simplify this object by converting it to a SpatialPolygons class object (i.e., only the polygons are retained and their attributes discarded):
 refregions <- as(IPCC_WGI_reference_regions_v4, "SpatialPolygons")
@@ -1548,7 +1549,7 @@ continent_mapping <- list(
 )
 
 
-regional_results_ERA5Land<- readRDS("~/cwd_global/data/regionalResults_ERA5Land.RData") #1950 - 2024
+regional_results_ERA5Land<- readRDS("data/regionalResults_ERA5Land.RData") #1950 - 2024
 ### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
 regional_results_ERA5Land <- lapply(regional_results_ERA5Land, function(x) x[21:75])
 
@@ -1610,7 +1611,7 @@ Apply bias correction for chosen overlap period (21:50) - excludes 60s with pote
 # ###save bias corrected ModE-Sim data: 
 # saveRDS(corrected_full, "~/cwd_global/data/regionalResults_ModESim_bc.RData")
 
-corrected_full <- readRDS("~/cwd_global/data/regionalResults_ModESim_bc.RData")
+corrected_full <- readRDS("data/regionalResults_ModESim_bc.RData")
 
 ```
 
@@ -1621,10 +1622,6 @@ Validation plots:
 - scatterplot where data should lie on 1:1 line if it represents well 
 
 ```{r}
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-
 # Convert ModESim data to long format
 ModESim_long <- bind_rows(lapply(names(merged_results), function(region) {
   data.frame(
@@ -4577,7 +4574,7 @@ first 3:
 3rd: y-axis: ERA5-Land 1995-2024 5 yr vs x-axis: ModE-SIm BC 1970-1999
 
 ```{r}
-corrected_full <- readRDS("~/cwd_global/data/regionalResults_ModESim_bc.RData")
+corrected_full <- readRDS("data/regionalResults_ModESim_bc.RData")
 
 ##calculate return level of 5 year events - 30 year chunks for consistency: 
 #remove SAH due to unphysically large PCWD values - runaway PCWD 
@@ -4616,11 +4613,13 @@ for (region in names(regional_results_ERA5Land_eva)) { #swap european_regions fo
 }
 
 ##### ModE-Sim 
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim"
-folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}_tidy") #m001 - m020 in first set
+path <- "data/volc_impact_aggregates/collected_p_pet/"
+folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020 in first set
 
 # Extract unique ensemble member identifiers from folder names
-ensemble_members <- unique(basename(folders))[1:20]
+ensemble_member <- unique(basename(folders))[1:20]
+ensemble_members <- paste0(ensemble_member, "_tidy")
+
 
 corrected_full_eva <- corrected_full[ names(corrected_full) != "SAH" ]
 
@@ -4989,10 +4988,11 @@ for (region in names(regional_results_ERA5Land_eva)) { #swap european_regions fo
 }
 
 ##### ModE-Sim 
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim"
-folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}_tidy$") #m001 - m020 in first set
+path <- "data/volc_impact_aggregates/collected_p_pet/"
+folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020 in first set
 # Extract unique ensemble member identifiers from folder names
-ensemble_members <- unique(basename(folders))
+ensemble_member <- unique(basename(folders))[1:20]
+ensemble_members <- paste0(ensemble_member, "_tidy")
 
 corrected_full_eva <- corrected_full[ names(corrected_full) != "SAH" ]
 regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
@@ -5316,7 +5316,7 @@ geom_errorbarh(aes(xmin = mod_min_full, xmax = mod_max_full), height = 0) +
   )
 
 ggsave(
-  filename = "~/cwd_global/manuscript/scatter_legend.pdf",
+  filename = "figures/scatter_legend.pdf",
  # plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -5544,14 +5544,14 @@ Load reference region info:
 ```{r}
 #Load reference regions and coastlines:
 
-load("/storage/homefs/ph23v078/Reference_regions/IPCC-WGI-reference-regions-v4_R.rda", verbose = TRUE)
+load("data/Reference_regions/IPCC-WGI-reference-regions-v4_R.rda", verbose = TRUE)
 # IPCC_WGI_reference_regions_v4 is a Spatial*DataFrame with a column "region" (or similar)
 refregions_sf <- st_as_sf(IPCC_WGI_reference_regions_v4)
 refregions_sf <- refregions_sf %>% rename(region = Acronym)
 
 temp.dir <- tempdir()
-unzip("/storage/homefs/ph23v078/Reference_regions/ne_110m_coastline.zip", exdir = temp.dir)
-coastLines <- readOGR(dsn = temp.dir, layer = "ne_110m_coastline")
+unzip("data/Reference_regions/ne_110m_coastline.zip", exdir = temp.dir)
+coastLines <- st_read(dsn = temp.dir, layer = "ne_110m_coastline")
 
 names(names(refregions))
 
@@ -5902,7 +5902,7 @@ plot_tvalue_with_hatch <- function(t_column = "t_full", exceed_col = "exceed_pre
     # Main fill by t-value
     geom_sf(
       data = shown_sf,
-      aes_string(fill = t_column),
+      aes(fill = !!sym(t_column)),
       color = "grey20",
       size = 0.15
     ) +
@@ -5945,30 +5945,30 @@ plot_tvalue_with_hatch <- function(t_column = "t_full", exceed_col = "exceed_pre
     theme(
       legend.title = element_text(face = "bold"),
       plot.margin = margin(0, 0, 0, 0),
-      legend.position = "none"
+      legend.position = "right"
     )
 }
 
 
 map_full <- plot_tvalue_with_hatch("t_full", "exceed_all")
 
-ggsave(
-  filename = "~/cwd_global/manuscript/Scatter_plots_tvalue_full.pdf",
-  plot = map_full,
-  device   = cairo_pdf,    # better text rendering
-  width    = 17,           # in inches
-  height   = 13,            # in inches
-  units    = "in",
-  dpi      = 300,          # for raster elements (if any)
-  bg       = "white"       # white background
-)
+# ggsave(
+#   filename = "~/cwd_global/manuscript/Scatter_plots_tvalue_full.pdf",
+#   plot = map_full,
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 17,           # in inches
+#   height   = 13,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
 
 map_pre <- plot_tvalue_with_hatch("t_pre", "exceed_pre")
 map_early <- plot_tvalue_with_hatch("t_early", "exceed_early")
 map_modern <- plot_tvalue_with_hatch("t_modern", "exceed_modern")
 
 
-
+map_full
 ```
 
 Put together with scatter plots: 
@@ -6041,7 +6041,7 @@ plot_tvalue_with_hatch <- function(t_column = "t_full", exceed_col = "exceed_pre
     geom_sf(data = land, fill = "lightgrey", color = NA) +
     geom_sf(
       data = shown_sf,
-      aes_string(fill = t_column),
+      aes(fill = !!sym(t_column)),
       color = "grey50", size = 0.2
     ) +
 
@@ -6075,7 +6075,7 @@ plot_tvalue_with_hatch <- function(t_column = "t_full", exceed_col = "exceed_pre
 
     # 5) Single-entry hatch legend: FALSE → none, TRUE → stripe
     scale_pattern_manual(
-      name   = "Exceeds\nnatural spread",
+      name   = "Exceeds\nreference\nvariability",
       values = c(`FALSE` = "none", `TRUE` = "stripe"),
       breaks = "TRUE",         # only show the TRUE key
      # labels = "exceeding modeled range",
@@ -6114,7 +6114,7 @@ plot_tvalue_with_hatch("t_full", "exceed_all")
 
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Scatter_plots_tvalue_legend.pdf",
+  filename = "figures/Scatter_plots_tvalue_legend.pdf",
   device   = cairo_pdf,    # better text rendering
   width    = 17,           # in inches
   height   = 13,            # in inches

@@ -24,9 +24,10 @@
 figures/
 
 # produced data
-data/*.csv
-data/*.rds
 data/*.RData
+data/*.rds
+data/*.csv
+data/volc_impact_aggregates/
 
 # produced vignettes
 vignettes/*.html

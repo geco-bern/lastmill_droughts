@@ -7,6 +7,10 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Bern/Master thesis/R/lastmill_droughts")
+knitr::opts_knit$set(root.dir = "~/Bern/Master thesis/R/lastmill_droughts")
+
+
 ```
 
 ```{r libraries, message=FALSE, echo=FALSE}
@@ -24,15 +28,8 @@ library(maps)
 library(raster)
 library(rnaturalearth)
 library(sf)
-library(rgdal)
 library(sp)
 library(RColorBrewer)
-library(rJava)
-library(loadeR.java)
-library(transformeR)
-library(loadeR)
-library(visualizeR)
-library(geoprocessoR)
 library(tidyverse)
 library(abind)
 library(patchwork)
@@ -46,7 +43,7 @@ Read in extracted annmax pcwd, annual total precip and total pet data for 1420-1
 
 ```{r}
 ##get dimensions from one ensemble member
-nc_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet/m020/tot_precip_tot_p_pet.nc"
+nc_file <- "data/volc_impact_aggregates/collected_p_pet/m019/tot_precip_tot_p_pet.nc"
 nc_precip <- nc_open(nc_file)
 precip <- ncvar_get(nc_precip, varid = "tot_precip")
 lat <- ncvar_get(nc_precip, varid = "lat")
@@ -54,12 +51,12 @@ lon <- ncvar_get(nc_precip, varid = "lon")
 time <- ncvar_get(nc_precip,varid = "time")
 nc_close(nc_precip)
 
-nc_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet/m019/tot_pet_tot_p_pet.nc"
+nc_file <- "data/volc_impact_aggregates/collected_p_pet/m019/tot_pet_tot_p_pet.nc"
 nc_pet <- nc_open(nc_file)
 pet <- ncvar_get(nc_pet, varid = "tot_pet")
 nc_close(nc_pet)
 
-nc_file <-"/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet/m019/max_deficit_tot_p_pet.nc"
+nc_file <-"data/volc_impact_aggregates/collected_p_pet/m019/max_deficit_tot_p_pet.nc"
 nc_pcwd <- nc_open(nc_file)
 pcwd <- ncvar_get(nc_pcwd, varid = "max_deficit")
 nc_close(nc_pcwd)
@@ -74,7 +71,7 @@ PRECIP
 ```{r}
 #### total precipitation: 
 # Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet"
+path <- "data/volc_impact_aggregates/collected_p_pet/"
 
 # List all the directories within the base path
 folders <- list.files(path, full.names = TRUE)
@@ -135,7 +132,7 @@ PET
 ```{r}
 #### total precipitation: 
 # Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet"
+path <- "data/volc_impact_aggregates/collected_p_pet/"
 
 # List all the directories within the base path
 folders <- list.files(path, full.names = TRUE)
@@ -193,7 +190,7 @@ PCWD
 ```{r}
 #### total precipitation: 
 # Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet"
+path <- "data/volc_impact_aggregates/collected_p_pet/"
 
 # List all the directories within the base path
 folders <- list.files(path, full.names = TRUE)
