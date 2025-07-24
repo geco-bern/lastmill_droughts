@@ -42,61 +42,6 @@ library(ggsci)
 
 ## Analysis of volcanic forcing impact on hydroclimatic (PCWD, P, PET) variables after large volcanic eruptions
 
-
-#### Overview of epoch 1 volcanic eruptions:
-Select AOD > 0.01 for large stratospheric eruptions
-
-```{r}
-aod_1420_df$year <- format(aod_1420_df$dates, "%Y")
-
-# Check the result
-head(aod_1420_df)
-
-# Line plot
-ggplot(aod_1420_df, aes(x = dates, y = mean_value)) +
-  geom_line(color = "#5BC0EB", linewidth = 1) +  # Line plot
-  labs(title = "Global Mean Volcanic AOD", 
-       x = "Year", 
-       y = "AOD (μm)") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels if needed
-
-###
-# Find the eruption peak month for each eruption (grouped by year)
-# Vector of eruption years you want to keep (as characters to match your df)
-eruption_years <- c("1457","1458","1599", "1600", "1640","1641","1694", "1695","1782" ,"1783", "1808","1809","1814", "1815", "1830","1831") #8 largest eruption peaks + years before that
-
-# Filter only the years you care about
-eruption_peaks <- aod_1420_df %>%
-  filter(year %in% eruption_years) %>%
-  group_by(year) %>%
-  # Keep the month with the largest *increase* in AOD
-  filter(mean_value == max(mean_value, na.rm = TRUE)) %>%
-  ungroup()
-
-eruption_peak_years <- c("1458","1600", "1641","1695","1783", "1809","1815", "1831") #8 largest eruptions
-eruption_onset_years <- c("1457","1599", "1640","1694","1782", "1808","1814", "1830") #8 largest eruptions
-eruption_onsets <- eruption_peaks %>%
-  filter(year %in% eruption_onset_years)
-eruption_peaks_pl <- eruption_peaks %>%
-  filter(year %in% eruption_peak_years)
-         
-eruption_dates<-eruption_peaks_pl$dates
-
-# Line plot
-ggplot() +
-geom_line(data = aod_1420_df, aes(x = dates, y = mean_value),color = "#5BC0EB", linewidth = 0.8) +  # Line plot
-geom_point(data = eruption_onsets, aes(x = dates, y = mean_value),color = "#FDE74C", size = 1.5) +  # point plot
-geom_point(data = eruption_peaks_pl, aes(x = dates, y = mean_value),color = "#9BC53D", size = 1.5) +  # Line plot
-  labs(title = "Global Mean Volcanic AOD", 
-       x = "Year", 
-       y = "AOD (μm)") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels if needed
-
-```
-
-
 Read in extracted annmax pcwd, annual total precip and total pet data for 1420-1450, 1783, 1784, 1815 and 1816
 
 ```{r}
