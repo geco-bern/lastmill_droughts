@@ -1,0 +1,3275 @@
+---
+title: "PCWD Anomalies and GINI calculation"
+author: "Patricia Helpap"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load relevant libraries:
+```{r libraries, message=FALSE, echo=FALSE}
+library(readr)
+library(dplyr)
+library(here)
+library(lubridate)
+library(patchwork)
+library(ggplot2)
+library(cwd)
+library(ncdf4)
+library(reshape2)
+library(ggpubr)
+library(maps)
+library(raster)
+library(rnaturalearth)
+library(sf)
+library(rgdal)
+library(sp)
+library(RColorBrewer)
+library(rJava)
+library(loadeR.java)
+library(transformeR)
+library(loadeR)
+library(visualizeR)
+library(geoprocessoR)
+library(tidyverse)
+library(abind)
+library(patchwork)
+library(gridExtra)
+library(DescTools) #for GINI calculation
+library(ggsci)
+```
+
+# Anomaly analysis of PCWD regional time series
+
+- calculate timeseries of rolling anomalies wrt a reference: 1420-1450 as reference for epoch 1; 1851-1880 for epoch 2
+- anomalies: value(t) - mean(1420-1450)
+
+
+Load regional aggregated data:
+```{r}
+#read in aggregated regional data
+# #Load with
+regional_results_1420 <- readRDS("~/cwd_global/data/regionalResults_1420_1.RData")
+regional_results_1850 <- readRDS("~/cwd_global/data/regionalResults_1850_1.RData")
+
+### Remove m001_tidy for areas CAU, EAU, NAU, NZ, SAU, RFE, EAS, SEA
+# List of regions where the first ensemble member should be removed
+regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+
+# Loop through each specified region and remove the first column (m001_tidy) - bias over Oceania
+for (region in regions_to_modify) {
+  regional_results_1420[[region]] <- regional_results_1420[[region]][, -1]
+}
+
+
+```
+
+```{r}
+# Define continent assignments
+continent_mapping <- list(
+  "Europe" = c("NEU", "WCE", "EEU", "MED"),
+  "North America" = c("NWN", "NEN", "WNA", "CNA", "ENA", "GIC"),
+  "Africa" = c("SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG"),
+  "Asia" = c("WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "WSB", "ESB", "RFE", "RAR"),
+  "Central America" =c("NCA", "SCA", "CAR"),
+  "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
+  "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
+)
+```
+
+## Volcanic forcing impact on PCWD annual anomalies
+
+Load volcanic forcing data for ModE-Sim set 1:
+```{r}
+#read in volcanic forcing data for set 1: 
+#AOD years 1000 C.E. to 1900 C.E.:
+input_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/ModESim_forcings/1420_1/eva_holo2.2_forcing_echam_T63_ir_1000-1900.nc"
+nc_forcings <- nc_open(input_file)
+aod = ncvar_get(nc_forcings, varid="aod")[6,,] # index 6 for 500nm wavelength
+lat = ncvar_get(nc_forcings, varid="lat")
+time_1420 = ncvar_get(nc_forcings, varid="time")
+time_units <- ncatt_get(nc_forcings, "time", "units")  # Check the time units (e.g., "days since 0001-01-01")
+nc_close(nc_forcings)
+
+########### Calculate annual mean values for first epoch years:
+# Define the years of interest
+years_of_interest <- 1420:1849
+
+# Find indices of columns corresponding to the desired years
+selected_indices <- which(time_1420 %in% years_of_interest)
+
+# Subset the matrix to include only those years
+aod_selected <- aod[, selected_indices]
+time_selected <- time_1420[selected_indices]  # Corresponding time values
+
+### compute annual mean over latitudes:
+# Compute the mean over latitudes (first dimension)
+mean_latitude <- apply(aod_selected, 2, mean, na.rm = TRUE)
+# Create a data frame from the two lists
+df <- data.frame(
+  AOD = mean_latitude,
+  year = time_selected
+)
+
+# Calculate the annual mean AOD value (ignoring NA values)
+annual_mean_AOD <- df %>%
+  group_by(year) %>%
+  summarise(mean_AOD = mean(AOD, na.rm = TRUE))
+
+# Create the corresponding months (repeating each year 12 times)
+months <- rep(1:12, length(time_selected) / 12)  # Assuming 12 months for each year
+
+# Create the "yyyy-mm" format using the year and month
+dates <- paste(time_selected, sprintf("%02d", months), sep = "-")  # sprintf adds leading zero for months < 10
+
+# Now dates is in "yyyy-mm" format
+head(dates)  # Check the first few entrie
+
+# Convert to a data frame for easier manipulation
+aod_1420_df <- data.frame(dates = dates, mean_value = mean_latitude)
+
+# Compute the monthly !!! mean (since each year has 12 monthly values)
+library(dplyr)
+aod_annual_mean_1420 <- aod_1420_df %>%
+  group_by(dates) %>%
+  summarise(annual_mean_value = mean(mean_value, na.rm = TRUE))
+
+#write.csv(aod_annual_mean_1420, "~/cwd_global/data/AOD_annual_mean_1420epoch.csv")
+
+
+####read in data: 
+##### volc forcing for 1420 - global annual mean: 
+aod_annual_mean_1420 <- read.csv("~/cwd_global/data/AOD_annual_mean_1420epoch.csv")
+##### volc forcing for 1850 - global annual mean: 
+aod_annual_mean_1850 <- read.csv("~/cwd_global/data/AOD_annual_mean_1850epoch.csv")
+aod_annual_mean_1850 <- aod_annual_mean_1850 %>% 
+  rename(
+    year = Year,
+    annual_mean_value = mean_AOD
+    )
+
+```
+
+
+```{r}
+################################converting 1420 -1849 AOD into monthly format
+# Convert year to Date if necessary (since it's currently in 'yyyy-mm' format)
+# Convert the 'year' column to Date using lubridate's ym() function
+aod_1420_df$dates <- lubridate::ym(aod_1420_df$dates)
+
+# Check the result
+head(aod_1420_df$dates)
+
+
+# Line plot
+ggplot(aod_1420_df, aes(x = dates, y = mean_value)) +
+  geom_line(color = "blue", size = 1) +  # Line plot
+  labs(title = "Line Plot of Mean Value Over Time", 
+       x = "Year", 
+       y = "Mean Value") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels if needed
+
+##################Select all years where aod > 0.01
+```
+
+
+Calculate PCWD anomalies for each time step: 
+
+```{r}
+### calculate anomalies for both epochs based on reference time 1420-1450
+
+### calculate baseline for anomalies: 1420-1450 mean for each region
+# Initialize list to store baselines for each region
+anom_baseline <- list()
+
+# Loop over regions
+for (region_name in names(regional_results_1420)) {
+  
+  # Extract all ensemble members for the region
+  ensemble_members <- regional_results_1420[[region_name]]
+  
+  # Compute the mean over all values in the first 30 years, pooling everything
+  anom_baseline[[region_name]] <- mean(ensemble_members[1:30, ], na.rm = TRUE)
+}
+
+# Initialize lists to store results
+anoms_1420 <- list()      # Mean anomalies for each region
+anoms_sd_1420 <- list()   # Standard deviation of anomalies for each region
+ens_anoms_1420 <- list()
+
+# Loop over regions
+for (region_name in names(regional_results_1420)) {
+  
+  # Extract the ensemble members for the region
+  ensemble_members <- regional_results_1420[[region_name]]  # Now using full ensemble data
+  
+  # Compute anomalies for each ensemble member
+  ensemble_anoms <- sweep(ensemble_members, 2, anom_baseline[[region_name]], "-")  # Subtract baseline
+  
+  ens_anoms_1420[[region_name]] <- ensemble_anoms
+  # Compute mean anomaly across ensemble members
+  anoms_1420[[region_name]] <- rowMeans(ensemble_anoms, na.rm = TRUE)
+  
+  # Compute standard deviation (uncertainty) across ensemble members
+  anoms_sd_1420[[region_name]] <- apply(ensemble_anoms, 1, sd, na.rm = TRUE)
+}
+
+
+### calculate baseline for anomalies: 1420-1450 mean for each region
+# Initialize list to store baselines for each region
+anom_baseline_1850 <- list()
+
+# Loop over regions
+for (region_name in names(regional_results_1850)) {
+  
+  # Extract all ensemble members for the region
+  ensemble_members <- regional_results_1850[[region_name]]
+  
+  # Compute baseline (mean over first 30 years) for each ensemble member
+  anom_baseline_1850[[region_name]] <- mean(ensemble_members[1:30,], na.rm = TRUE)
+}
+
+# Initialize lists to store results
+anoms_1850 <- list()      # Mean anomalies for each region
+anoms_sd_1850 <- list()   # Standard deviation of anomalies for each region
+
+# Loop over regions
+for (region_name in names(regional_results_1850)) {
+  
+  # Extract the ensemble members for the region
+  ensemble_members <- regional_results_1850[[region_name]]  # Now using full ensemble data
+  
+  # Compute anomalies for each ensemble member
+  ensemble_anoms <- sweep(ensemble_members, 2, anom_baseline_1850[[region_name]], "-")  # Subtract baseline
+  
+  # Compute mean anomaly across ensemble members
+  anoms_1850[[region_name]] <- rowMeans(ensemble_anoms, na.rm = TRUE)
+  
+  # Compute standard deviation (uncertainty) across ensemble members
+  anoms_sd_1850[[region_name]] <- apply(ensemble_anoms, 1, sd, na.rm = TRUE)
+}
+
+```
+
+For simplicity: linear detrending of the data to remove warming trends etc:
+
+```{r}
+# Function to linearly detrend a time series
+detrend_data <- function(anomaly_series) {
+  time <- seq_along(anomaly_series)  # Create time index
+  model <- lm(anomaly_series ~ time, na.action = na.exclude)  # Fit linear model
+  trend <- predict(model)  # Extract trend
+  detrended_series <- anomaly_series - trend  # Subtract trend
+  return(detrended_series)
+}
+
+# Apply detrending to all regions
+anoms_detrended_1420 <- lapply(anoms_1420, detrend_data)
+
+# Apply detrending to all regions
+anoms_detrended_1850 <- lapply(anoms_1850, detrend_data)
+
+```
+
+
+Create Dataframe region: 
+```{r}
+########### 1420 period
+# Convert SNR list into a data frame
+anom_df_1420 <- do.call(rbind, lapply(names(anoms_detrended_1420), function(region) {
+  data.frame(
+    time = seq(1420,1849),  # Extract time from names
+    anomalies = anoms_detrended_1420[[region]],
+    #std = anoms_sd_1420[[region]],
+    region = region                                # Add region identifier
+  )
+}))
+
+# Add a continent column to the SNR data frame
+anom_df_1420$continent <- NA  # Initialize continent column
+
+for (continent in names(continent_mapping)) {
+  anom_df_1420$continent[anom_df_1420$region %in% continent_mapping[[continent]]] <- continent
+}
+
+
+###### 1850 period
+# Convert SNR list into a data frame
+anom_df_1850 <- do.call(rbind, lapply(names(anoms_detrended_1850), function(region) {
+  data.frame(
+    time = seq(1850,2009),  # Extract time from names
+    anomalies = anoms_1850[[region]], 
+    #std = anoms_sd_1850[[region]],
+    region = region                                # Add region identifier
+  )
+}))
+
+# Add a continent column to the SNR data frame
+anom_df_1850$continent <- NA  # Initialize continent column
+
+for (continent in names(continent_mapping)) {
+  anom_df_1850$continent[anom_df_1850$region %in% continent_mapping[[continent]]] <- continent
+}
+
+```
+
+Plot timeseries of anomalies for all regions: 
+
+```{r}
+#################all continents for 1420 epoch ###################################
+
+#### Europe ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Europe"
+selected_region <- "WCE"
+anom_filtered <- anom_df_1420 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+aod_max <- max(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+#scale_factor <- 3500
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- annual_mean_AOD %>%
+  mutate(scaled_aod = (mean_AOD - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey40", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.8, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t. 1420-1450"
+    #,    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Global Mean AOD [μm]"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "#C355A7"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 14),  # Size for facet labels
+    axis.title.y.right = element_text(color = "#C355A7", size = 13),
+    axis.text.y.right  = element_text(color = "#C355A7", size = 12),
+    strip.background = element_rect(fill = "#F5B0CB")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+#### Asia ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Asia"
+selected_region <- "EAS"
+anom_filtered <- anom_df_1420 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+aod_max <- max(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+#scale_factor <- 3500
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- annual_mean_AOD %>%
+  mutate(scaled_aod = (mean_AOD - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey40", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.8, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t. 1420-1450"
+    #,    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Global Mean AOD [μm]"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "#C355A7"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 14),  # Size for facet labels
+    axis.title.y.right = element_text(color = "#C355A7", size = 13),
+    axis.text.y.right  = element_text(color = "#C355A7", size = 12),
+    strip.background = element_rect(fill = "#E5973B")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+#### Australia ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Australia"
+selected_region <- "CAU"
+anom_filtered <- anom_df_1420 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+aod_max <- max(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+#scale_factor <- 3500
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- annual_mean_AOD %>%
+  mutate(scaled_aod = (mean_AOD - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey40", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.8, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t. 1420-1450"
+    #,    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Global Mean AOD [μm]"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "#C355A7"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 14, color = "white"),  # Size for facet labels
+    axis.title.y.right = element_text(color = "#C355A7", size = 13),
+    axis.text.y.right  = element_text(color = "#C355A7", size = 12),
+    strip.background = element_rect(fill = "#3C3980")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+##### Africa ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Africa"
+selected_region <- "WSAF"
+anom_filtered <- anom_df_1420 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+aod_max <- max(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+#scale_factor <- 3500
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- annual_mean_AOD %>%
+  mutate(scaled_aod = (mean_AOD - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey40", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.8, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t. 1420-1450"
+    #,    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Global Mean AOD [μm]"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "#C355A7"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 14),  # Size for facet labels
+    axis.title.y.right = element_text(color = "#C355A7", size = 13),
+    axis.text.y.right  = element_text(color = "#C355A7", size = 12),
+    strip.background = element_rect(fill = "#91C7B1")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+#### North America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "North America"
+selected_region <- "WNA"
+anom_filtered <- anom_df_1420 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+aod_max <- max(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+#scale_factor <- 3500
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- annual_mean_AOD %>%
+  mutate(scaled_aod = (mean_AOD - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey40", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.8, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t. 1420-1450"
+    #,    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Global Mean AOD [μm]"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "#C355A7"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 14, color= "white"),  # Size for facet labels
+    axis.title.y.right = element_text(color = "#C355A7", size = 13),
+    axis.text.y.right  = element_text(color = "#C355A7", size = 12),
+    strip.background = element_rect(fill = "#236A3F")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+#### Central America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Central America"
+selected_region <- "SCA"
+anom_filtered <- anom_df_1420 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+aod_max <- max(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+#scale_factor <- 3500
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- annual_mean_AOD %>%
+  mutate(scaled_aod = (mean_AOD - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey40", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.8, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t. 1420-1450"
+    #,    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Global Mean AOD [μm]"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "#C355A7"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 14, color = "white"),  # Size for facet labels
+    axis.title.y.right = element_text(color = "#C355A7", size = 13),
+    axis.text.y.right  = element_text(color = "#C355A7", size = 12),
+    strip.background = element_rect(fill = "#B33951")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+#### South America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "South America"
+selected_region <- "SES"
+anom_filtered <- anom_df_1420 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+aod_max <- max(annual_mean_AOD$mean_AOD, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+#scale_factor <- 3500
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- annual_mean_AOD %>%
+  mutate(scaled_aod = (mean_AOD - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey40", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.8, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t. 1420-1450"
+    #,    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Global Mean AOD [μm]"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "#C355A7"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 14),  # Size for facet labels
+    axis.title.y.right = element_text(color = "#C355A7", size = 13),
+    axis.text.y.right  = element_text(color = "#C355A7", size = 12),
+    strip.background = element_rect(fill = "#E3D081")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+```
+
+
+```{r}
+#################all continents for 1850 epoch ###################################
+#### Europe ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Europe"
+anom_filtered <- anom_df_1850 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+aod_max <- max(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+scale_factor <- 30000
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- aod_annual_mean_1850 %>%
+  mutate(scaled_aod = (annual_mean_value - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey2", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.5, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD Anomalies (w.r.t. 1850-2009)",
+    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Mean AOD"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "red"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 10),  # Size for facet labels
+    strip.background = element_rect(fill = "#F5B0CB")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+#### Asia ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Asia"
+anom_filtered <- anom_df_1850 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+aod_max <- max(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+scale_factor <- 30000
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- aod_annual_mean_1850 %>%
+  mutate(scaled_aod = (annual_mean_value - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey2", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.5, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD Anomalies (w.r.t. 1850-2009)",
+    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Mean AOD"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "red"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 10, color = "white"),  # Size for facet labels
+    strip.background = element_rect(fill = "#3C3980")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+##### Africa ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Africa"
+anom_filtered <- anom_df_1850 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+aod_max <- max(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+scale_factor <- 18000
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- aod_annual_mean_1850 %>%
+  mutate(scaled_aod = (annual_mean_value - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey2", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.5, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD Anomalies (w.r.t. 1850-2009)",
+    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Mean AOD"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "red"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 10),  # Size for facet labels
+    strip.background = element_rect(fill = "#91C7B1")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+#### North America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "North America"
+anom_filtered <- anom_df_1850 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+aod_max <- max(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+scale_factor <- 10000
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- aod_annual_mean_1850 %>%
+  mutate(scaled_aod = (annual_mean_value - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey2", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.5, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD Anomalies (w.r.t. 1850-2009)",
+    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Mean AOD"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "red"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 10),  # Size for facet labels
+    strip.background = element_rect(fill = "#236A3F")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+#### Central America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Central America"
+anom_filtered <- anom_df_1850 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+aod_max <- max(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+scale_factor <- 40000
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- aod_annual_mean_1850 %>%
+  mutate(scaled_aod = (annual_mean_value - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+  #geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey2", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.5, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD Anomalies (w.r.t. 1850-2009)",
+    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Mean AOD"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "red"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 10),  # Size for facet labels
+    strip.background = element_rect(fill = "#B33951")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+#### South America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "South America"
+anom_filtered <- anom_df_1850 %>% filter(continent == selected_continent)
+
+# Normalize AOD data to fit the anomalies scale
+aod_min <- min(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+aod_max <- max(aod_annual_mean_1850$annual_mean_value, na.rm = TRUE)
+anom_min <- min(anom_filtered$anomalies, na.rm = TRUE)
+anom_max <- max(anom_filtered$anomalies, na.rm = TRUE)
+
+# Calculate scale factor to ensure zero alignment
+aod_zero <- 0  # AOD zero point
+anom_zero <- 0  # Anomalies zero point
+scale_factor <- (anom_max - anom_min) / (aod_max - aod_min)  # Scale based on range
+scale_factor <- 30000
+
+# Scale AOD values to match the anomalies scale
+annual_mean <- aod_annual_mean_1850 %>%
+  mutate(scaled_aod = (annual_mean_value - aod_zero) * scale_factor + anom_zero)
+
+# Plot anom time series
+ggplot(anom_filtered, aes(x = time, y = anomalies, color = "PCWD anomalies")) +
+  geom_line(show.legend = TRUE) +  # Plot lines for each region
+ # geom_ribbon(aes(ymin = anomalies - std, ymax = anomalies + std, fill = "SD across EMs"), alpha = 0.3,color = NA, show.legend = TRUE) +
+  geom_hline(yintercept = 0, color = "grey2", linetype = "dashed")+
+  # Secondary Y-axis: Volcanic Forcing (AOD)
+  geom_line(data = annual_mean, aes(x = year, y = scaled_aod, color = "Volcanic Forcing (AOD)"), linewidth = 0.5, linetype = "dotted", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD Anomalies [mm] (w.r.t. 1850-2009)",
+    title = paste("Detrended annual PCWD anomalies for", selected_continent)
+  ) +
+  # Secondary axis transformation ensuring zero alignment
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      ~ (. - anom_zero) / scale_factor + aod_zero, 
+      name = "Annual Mean AOD"
+    )
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("PCWD anomalies" = "black", "Volcanic Forcing (AOD)" = "red"),
+    labels = c("PCWD anomalies (Mean)", "Volcanic Forcing (AOD)")
+  ) +
+  scale_fill_manual(
+    values = c("SD across EMs" = "honeydew4"), 
+    labels = c("SD across EMs")
+  ) +
+    # Adjust legend appearance and keep the ribbon and line separate
+  # Customize the legend to avoid the honeydew4 background around lines (using override.aes)
+  guides(
+    color = guide_legend(title = "Legend", 
+                         order = 1, 
+                         override.aes = list(fill = NA, shape = NA)),  # Remove background for color lines
+    fill = guide_legend(title = "", order = 2)  # Fill scale: SD across Ensemble Members
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center the title
+    strip.text = element_text(size = 10),  # Size for facet labels
+    strip.background = element_rect(fill = "#E3D081")
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+```
+
+### Spatial PCWD anomalies after volcanic eruptions:
+
+Maps showing annual anomalies
+- showing Europe after 1783 eruption (Laki)
+- showing North America 
+- showing Central America
+
+Read in lat, lon and time info: 
+```{r}
+#lat lon and time info from netcdf files
+##read in data
+input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
+input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
+
+nc_pwcd_1850 <- nc_open(input_file_1850)
+pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")
+lon = ncvar_get(nc_pwcd_1850, varid="lon")
+lat = ncvar_get(nc_pwcd_1850, varid="lat")
+time_1850 = ncvar_get(nc_pwcd_1850, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_1850 <- reference_date + time_1850
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1850)
+
+#1420 file for 1420 time
+nc_pwcd_1420 <- nc_open(input_file_1420)
+pcwd_annmax_1420 = ncvar_get(nc_pwcd_1420, varid="pcwd_annmax")
+time_1420 = ncvar_get(nc_pwcd_1420, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+time_dates_1420 <- reference_date + time_1420
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1420)
+```
+
+aggregate files: 
+```{r}
+#read in netcdf data and aggregate
+
+#### 1420 set:
+# Define the base path - have to seperate sets once there are more!
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)  #only want m001-m020 for now
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "04_result_1420/PCWD_ANNMAX.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+target_files <- target_files[-1] #removes m001 due to spatial bias
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+ensemble_members <- ensemble_members[-1]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_1420 <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+nc_close(nc)
+
+# Loop through all the target files and store the data in a list
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+  
+  # Store the data in the list, keyed by the ensemble member
+  data_by_ensemble_1420[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_1420))  # Check stored ensemble members
+print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+
+
+#### 1850 set: 
+# Define the base path - have to think of way to seperate sets once there is data!!
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "04_result_1850/PCWD_ANNMAX.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_1850 <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+nc_close(nc)
+
+# Loop through all the target files and store the data in a list
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+  
+  # Store the data in the list, keyed by the ensemble member
+  data_by_ensemble_1850[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_1850))  # Check stored ensemble members
+print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+
+Compute anomalies for each time step:
+```{r}
+## Anomaly global grid cell values for 1420 epoch: 
+# Convert list of 20 ensemble members into a single 4D array: [192, 96, 431, 19] - without m001
+ensemble_array <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 431, 19]
+
+# Compute the ensemble mean across the 4th dimension (ensemble members)
+ensemble_mean_1420 <- apply(ensemble_array, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
+
+# `ensemble_mean_1420` now contains the ensemble-averaged values for each grid cell over time
+# Define dimensions
+num_years <- 431  # Total years in the dataset
+window_size <- 30  # Reference period (first 30 years)
+
+# Create an array of the same shape [192, 96, 431] to store means and standard deviations
+mean_reference_1420 <- array(NA, dim = c(192, 96))  # Mean for first 30 years
+anom_array_1420 <- array(NA, dim = c(192, 96, num_years))  # Store anomalies
+
+# Compute reference mean & standard deviation over first 30 years (years 1:30)
+for (i in 1:192) {
+  for (j in 1:96) {
+    reference_values <- ensemble_mean_1420[i, j, 1:window_size]  # First 30 years
+    mean_reference_1420[i, j] <- mean(reference_values, na.rm = TRUE)
+  }
+}
+
+# Compute anomalies for each time step
+for (t in 1:num_years) {  # Loop through all years
+  for (i in 1:192) {
+    for (j in 1:96) {
+        anom_array_1420[i, j, t] <- (ensemble_mean_1420[i, j, t] - mean_reference_1420[i, j])
+    }
+  }
+}
+
+# anom_array_1420 now contains anomalies for each grid cell at each time step
+
+
+## Anomaly global grid cell values for 1850 epoch: 
+# Convert list of 20 ensemble members into a single 4D array: [192, 96, 160, 20] 
+ensemble_array <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+
+# Compute the ensemble mean across the 4th dimension (ensemble members)
+ensemble_mean_1850 <- apply(ensemble_array, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+
+# `ensemble_mean_1850` now contains the ensemble-averaged values for each grid cell over time
+# Define dimensions
+num_years <- 160  # Total years in the dataset
+window_size <- 30  # Reference period (first 30 years)
+
+# Create an array of the same shape [192, 96, 431] to store means and standard deviations
+mean_reference_1850 <- array(NA, dim = c(192, 96))  # Mean for first 30 years
+anom_array_1850 <- array(NA, dim = c(192, 96, num_years))  # Store anomalies
+
+# Compute reference mean & standard deviation over first 30 years (years 1:30)
+for (i in 1:192) {
+  for (j in 1:96) {
+    reference_values <- ensemble_mean_1850[i, j, 1:window_size]  # First 30 years
+    mean_reference_1850[i, j] <- mean(reference_values, na.rm = TRUE)
+  }
+}
+
+# Compute anomalies for each time step
+for (t in 1:num_years) {  # Loop through all years
+  for (i in 1:192) {
+    for (j in 1:96) {
+        anom_array_1850[i, j, t] <- (ensemble_mean_1850[i, j, t] - mean_reference_1850[i, j])
+    }
+  }
+}
+
+# anom_array_1850 now contains anomalies for each grid cell at each time step
+
+```
+
+plot maps: 
+```{r}
+# Load land data for filling continents
+land <- ne_countries(scale = "medium", returnclass = "sf")
+
+```
+
+Region specifications: 
+Continent	Longitude (xlim)	Latitude (ylim)
+Europe	c(-15, 50)	c(30, 75)
+North America	c(-170, -10)	c(25, 90)
+Africa	c(-25, 60)	c(-35, 40)
+Asia	c(30, 180)	c(5, 80)
+Central America	c(-120, -60)	c(5, 35)
+South America	c(-85, -30)	c(-60, 15)
+Australia	c(110, 180)	c(-50, 0)
+
+```{r}
+#global anomaly map for 1783: 
+# Find the index for the year specified
+year_index <- 1783 - 1420 + 1  #-1420 or 1850 depending on dataset
+plot_data <- anom_array_1420[,,year_index] #specify dataset, 1420 or 1850
+
+# Convert the first year's data into a raster object
+r <- raster(t(plot_data), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Load land polygons for masking
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Ensure that the layer values are numeric (continuous)
+r_df$layer <- as.numeric(r_df$layer)
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = layer), na.rm = TRUE) +
+  scale_fill_distiller(name = "PCWD [mm]", 
+                       palette = "RdBu",  # Red-Blue diverging palette
+                       values = scales::rescale(c(-200, -10, 10, 200)),  # Rescales to emphasize 0-2 range
+                       limits = c(-500, 500),  # Adjust scale to focus on values between -1 and 1
+                       na.value = "grey50") +  # Color for missing values
+  labs(
+    #title = "PCWD Anomalies for 1783 w.r.t 1420-1450", 
+       x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=11), legend.text = element_text(size=11), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14))+
+  #coord_sf(xlim =	c(-85, -30), ylim =	c(-60, 15), expand = FALSE) +  # Adjusted for Europe
+   guides(fill = guide_legend(title = "PCWD anomalies [mm]", reverse = TRUE)) 
+
+
+```
+## Rolling 30 year anomaly timeseries for both epoch
+
+### Check method for 30 year anomalies + anomalies for all regions
+
+Calculate rolling 30-year means: 
+```{r}
+# Initialize list to store rolling 30-year means
+rolling_means <- list()
+
+# Define window size
+window_size <- 30
+
+# Compute rolling means for each ensemble member
+for (region_name in names(regional_results_1420)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_results_1420[[region_name]]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means[[region_name]] <- rolling_mean_matrix
+}
+
+####################### 1850 epoch anomalies
+# Initialize list to store rolling 30-year means
+rolling_means_1850 <- list()
+
+# Define window size
+window_size <- 30
+
+# Compute rolling means for each ensemble member
+for (region_name in names(regional_results_1850)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_results_1850[[region_name]]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means_1850[[region_name]] <- rolling_mean_matrix
+}
+```
+
+
+#### Calculate anomalies of 30yr running mean and plot
+
+```{r}
+# Initialize lists to store baselines
+anom_baseline <- list()
+
+# Compute baseline mean from the first 30 values of rolling mean
+for (region_name in names(rolling_means_1850)) {
+  rolling_mean_matrix <- rolling_means_1850[[region_name]]
+  
+  anom_baseline[[region_name]] <- mean(rolling_mean_matrix[30:1,], na.rm = TRUE)  ### for reference period of first 30 values: rolling_mean_matrix[1:30,]
+}
+
+# Initialize lists to store anomalies
+ensemble_30anom_1850 <- list()
+
+# Compute anomalies
+for (region_name in names(rolling_means_1850)) {
+  rolling_mean_matrix <- rolling_means_1850[[region_name]]
+  num_years <- nrow(rolling_mean_matrix)
+  
+  # Initialize matrix to store anomalies
+  anoms <- matrix(NA, nrow=num_years, ncol=ncol(rolling_mean_matrix))
+  
+  # Compute anomalies using rolling mean baseline
+  for (t in 1:num_years) {
+    anoms[t, ] <- (rolling_mean_matrix[t, ] - anom_baseline[[region_name]])
+  }
+  
+  # Store results
+  ensemble_30anom_1850[[region_name]] <- anoms
+}
+
+# Compute mean anomalies across ensemble members
+mean_30anom_1850 <- list()
+for (region_name in names(ensemble_30anom_1850)) {
+  mean_30anom_1850[[region_name]] <- rowMeans(ensemble_30anom_1850[[region_name]], na.rm = TRUE)
+}
+
+# Compute region-specific pooled standard deviation using only the first 30 years
+pooled_sd_by_region <- list()
+for (region_name in names(ensemble_30anom_1850)) {
+  # Extract only the first 30 years of anomalies
+  first_30_years <- ensemble_30anom_1850[[region_name]][1:30, ]
+  
+  # Compute pooled standard deviation over these values
+  pooled_sd_by_region[[region_name]] <- sd(unlist(first_30_years), na.rm = TRUE)
+}
+
+# Convert ensemble data into a long format for plotting individual members
+anoms_long_1850 <- do.call(rbind, lapply(names(ensemble_30anom_1850), function(region) {
+  df <- as.data.frame(ensemble_30anom_1850[[region]])
+  df$time <- seq(1865, 1995)  # Adjust time range accordingly
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "anomalies")
+  return(df_long)
+}))
+
+# Add a continent column
+anoms_long_1850$continent <- NA  # Initialize continent column
+for (continent in names(continent_mapping)) {
+  anoms_long_1850$continent[anoms_long_1850$region %in% continent_mapping[[continent]]] <- continent
+}
+
+```
+
+
+Plot for each region, showing ensemble mean anomalies and individual ensemble members:
+```{r}
+### Plot for each region
+# Filter for selected continent
+selected_continent <- "Europe"
+selected_region <- "NEU"
+anoms_filtered <- anoms_long_1850 %>% filter(region == selected_region)
+
+#plot 2sigma from reference period as horizontal lines around reference mean 
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1850-1880"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14),
+    strip.background = element_rect(fill = "#F5B0CB"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  
+  facet_wrap(~region, scales = "free_y")
+
+#### Asia ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Asia"
+selected_region <- "EAS"
+anoms_filtered <- anoms_long_1850 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1850-1880"
+    #,  title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14),  # Size for facet labels
+    strip.background = element_rect(fill = "#E5973B"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region,  scales = "free_y")  # Facet by region with independent y-axis scales
+
+##### Australia ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Australia"
+selected_region <- "EAU"
+anoms_filtered <- anoms_long_1850 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1850-1880"
+    #,  title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14, color = "white"),
+    strip.background = element_rect(fill = "#3C3980"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region,  scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+##### Africa ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Africa"
+selected_region <- "MDG"
+anoms_filtered <- anoms_long_1850 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1850-1880"
+    #,   title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14),  # Size for facet labels
+    strip.background = element_rect(fill = "#91C7B1"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region,  scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+#### North America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "North America"
+selected_region <- "ENA"
+anoms_filtered <- anoms_long_1850 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1850-1880"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14, color= "white"),
+    strip.background = element_rect(fill = "#236A3F"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region,  scales = "free_y")  # Facet by region with independent y-axis scales
+
+#### Central America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Central America"
+selected_region <- "SCA"
+anoms_filtered <- anoms_long_1850 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1850-1880"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14, color = "white"),
+    strip.background = element_rect(fill = "#B33951"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+#### South America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "South America"
+selected_region <- "NES"
+anoms_filtered <- anoms_long_1850 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1850-1880"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14),
+    strip.background = element_rect(fill = "#E3D081"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+```
+
+For 1420 period also: 
+Calculate anomalies:
+```{r}
+# Initialize lists to store baselines
+anom_baseline <- list()
+
+# Compute baseline mean from the first 30 values of rolling mean
+for (region_name in names(rolling_means)) {
+  rolling_mean_matrix <- rolling_means[[region_name]]
+  
+  anom_baseline[[region_name]] <- mean(rolling_mean_matrix[1:30,], na.rm = TRUE)  ### for reference period of first 30 values: rolling_mean_matrix[1:30,]
+}
+
+# Initialize lists to store anomalies
+ensemble_30anom_1420 <- list()
+
+# Compute anomalies
+for (region_name in names(rolling_means)) {
+  rolling_mean_matrix <- rolling_means[[region_name]]
+  num_years <- nrow(rolling_mean_matrix)
+  
+  # Initialize matrix to store anomalies
+  anoms <- matrix(NA, nrow=num_years, ncol=ncol(rolling_mean_matrix))
+  
+  # Compute anomalies using rolling mean baseline
+  for (t in 1:num_years) {
+    anoms[t, ] <- (rolling_mean_matrix[t, ] - anom_baseline[[region_name]])
+  }
+  
+  # Store results
+  ensemble_30anom_1420[[region_name]] <- anoms
+}
+
+# Compute mean anomalies across ensemble members
+mean_30anom_1420 <- list()
+for (region_name in names(ensemble_30anom_1420)) {
+  mean_30anom_1420[[region_name]] <- rowMeans(ensemble_30anom_1420[[region_name]], na.rm = TRUE)
+}
+
+# Compute region-specific pooled standard deviation using only the first 30 years
+pooled_sd_by_region_1420 <- list()
+for (region_name in names(ensemble_30anom_1420)) {
+  # Extract only the first 30 years of anomalies
+  first_30_years <- ensemble_30anom_1420[[region_name]][1:30, ]
+  
+  # Compute pooled standard deviation over these values
+  pooled_sd_by_region_1420[[region_name]] <- sd(unlist(first_30_years), na.rm = TRUE)
+}
+
+
+# Convert ensemble data into a long format for plotting individual members
+anoms_long_1420 <- do.call(rbind, lapply(names(ensemble_30anom_1420), function(region) {
+  df <- as.data.frame(ensemble_30anom_1420[[region]])
+  df$time <- seq(1435, 1835)  # Adjust time range accordingly
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "anomalies")
+  return(df_long)
+}))
+
+# Add a continent column
+anoms_long_1420$continent <- NA  # Initialize continent column
+for (continent in names(continent_mapping)) {
+  anoms_long_1420$continent[anoms_long_1420$region %in% continent_mapping[[continent]]] <- continent
+}
+
+```
+
+Plot region wise:
+```{r}
+### plot 
+### Plot for each region
+# Filter for selected continent
+selected_continent <- "Europe"
+selected_region <- "WCE"
+anoms_filtered <- anoms_long_1420 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1420-1450"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 15),
+    strip.background = element_rect(fill = "#F5B0CB"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  
+  facet_wrap(~region, scales = "free_y")
+
+#### Asia ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Asia"
+selected_region <- "SAS"
+anoms_filtered <- anoms_long_1420 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies (mm) w.r.t 1420-1450"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14),  # Size for facet labels
+    strip.background = element_rect(fill = "#E5973B"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region,  scales = "free_y")  # Facet by region with independent y-axis scales
+
+##### Australia ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Australia"
+selected_region <- "EAU"
+anoms_filtered <- anoms_long_1420 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1420-1450"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14, color = "white"),
+    strip.background = element_rect(fill = "#3C3980"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  
+  facet_wrap(~region, scales = "free_y")
+
+##### Africa ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Africa"
+selected_region <- "MDG"
+anoms_filtered <- anoms_long_1420 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1420-1450"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14),  # Size for facet labels
+    strip.background = element_rect(fill = "#91C7B1"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region,  scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+#### North America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "North America"
+selected_region <- "ENA"
+anoms_filtered <- anoms_long_1420 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1420-1450"
+    #, title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14, color = "white"),
+    strip.background = element_rect(fill = "#236A3F"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region,  scales = "free_y")  # Facet by region with independent y-axis scales
+
+#### Central America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "Central America"
+selected_region <- "CAR"
+anoms_filtered <- anoms_long_1420 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1420-1450"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14, color = "white"),
+    strip.background = element_rect(fill = "#B33951"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+#### South America ####
+# Filter data for the selected continent (e.g., Europe)
+selected_continent <- "South America"
+selected_region <- "SSA"
+anoms_filtered <- anoms_long_1420 %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - 2 * pooled_sd,
+    upper_bound = first_mean_anomaly + 2 * pooled_sd
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1420-1450"
+    #,title = paste("Rolling 30yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold", size= 12),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    strip.text = element_text(size = 14),
+    strip.background = element_rect(fill = "#E3D081"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12), 
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) +
+  facet_wrap(~region, scales = "free_y")  # Facet by region with independent y-axis scales
+
+
+```
+
+
+## Gini Index for inequality
+
+### Gini Maps
+
+- calculate Gini index for both each epoch for every gridcell
+- Map variability/ measure of inequality or unequalness
+- low number (close to 0 rather than 1) implies low inequality i.e. over time PCWD values stable for that gridcell
+- Gini index is more sensitive to changes in the middle of income distribution and less sensitive to changes at the top and the bottom of income distribution (Atkinson, 1970)
+
+Read in lat, lon and time info: 
+```{r}
+#lat lon and time info from netcdf files
+##read in data
+input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
+input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
+
+nc_pwcd_1850 <- nc_open(input_file_1850)
+pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")
+lon = ncvar_get(nc_pwcd_1850, varid="lon")
+lat = ncvar_get(nc_pwcd_1850, varid="lat")
+time_1850 = ncvar_get(nc_pwcd_1850, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_1850 <- reference_date + time_1850
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1850)
+
+#1420 file for 1420 time
+nc_pwcd_1420 <- nc_open(input_file_1420)
+pcwd_annmax_1420 = ncvar_get(nc_pwcd_1420, varid="pcwd_annmax")
+time_1420 = ncvar_get(nc_pwcd_1420, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+time_dates_1420 <- reference_date + time_1420
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1420)
+```
+
+aggregate files: 
+```{r}
+#read in netcdf data and aggregate
+
+#### 1420 set:
+# Define the base path - have to seperate sets once there are more!
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)  #only want m001-m020 for now
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "04_result_1420/PCWD_ANNMAX.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_1420 <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+nc_close(nc)
+
+# Loop through all the target files and store the data in a list
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+  
+  # Store the data in the list, keyed by the ensemble member
+  data_by_ensemble_1420[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_1420))  # Check stored ensemble members
+print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+
+
+#### 1850 set: 
+# Define the base path - have to think of way to seperate sets once there is data!!
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "04_result_1850/PCWD_ANNMAX.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_1850 <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+nc_close(nc)
+
+# Loop through all the target files and store the data in a list
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+  
+  # Store the data in the list, keyed by the ensemble member
+  data_by_ensemble_1850[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_1850))  # Check stored ensemble members
+print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+```{r}
+##bind both into one for mean over time: 
+
+# Create a new list to store the combined data
+data_combined <- list()
+
+# Loop over each ensemble member
+for (i in names(data_by_ensemble_1420)) {
+  # Remove last year from 1420 dataset (assumes 3rd dimension is time)
+  data_1420_trimmed <- data_by_ensemble_1420[[i]][,,1:(dim(data_by_ensemble_1420[[i]])[3] - 1)]
+  
+  # Bind with 1850 data (all years)
+  data_combined[[i]] <- abind::abind(
+    data_1420_trimmed,
+    data_by_ensemble_1850[[i]],
+    along = 3
+  )
+}
+```
+
+
+```{r}
+##### 1850 epoch
+# Create an array of the same shape [192, 96, 160] to store means
+mean_ensemble_1850 <- array(NA, dim = c(192, 96, 160))
+
+# Compute the mean over all ensemble members
+ensemble_array <- simplify2array(data_by_ensemble_1850)  # Convert list to array
+mean_ensemble_1850 <- apply(ensemble_array, c(1,2,3), mean, na.rm = TRUE)
+
+# Create an array to store Gini indices
+gini_values_1850 <- matrix(NA, nrow = 192, ncol = 96)
+
+# Loop through each grid cell and compute Gini index over time
+for (i in 1:192) {
+  for (j in 1:96) {
+    gini_values_1850[i, j] <- Gini(mean_ensemble_1850[i, j, ], na.rm = TRUE)
+  }
+}
+
+#### 1420 epoch
+# Create an array of the same shape [192, 96, 160] to store means
+mean_ensemble_1420 <- array(NA, dim = c(192, 96, 160))
+
+# Compute the mean over all ensemble members
+ensemble_array <- simplify2array(data_by_ensemble_1420)  # Convert list to array
+mean_ensemble_1420 <- apply(ensemble_array, c(1,2,3), mean, na.rm = TRUE)
+
+# Create an array to store Gini indices
+gini_values_1420 <- matrix(NA, nrow = 192, ncol = 96)
+
+# Loop through each grid cell and compute Gini index over time
+for (i in 1:192) {
+  for (j in 1:96) {
+    gini_values_1420[i, j] <- Gini(mean_ensemble_1420[i, j, ], na.rm = TRUE)
+  }
+}
+
+mean_ensemble_combined <- array(NA, dim = c(192, 96, 590))
+# Compute the mean over all ensemble members
+ensemble_array <- simplify2array(data_combined)  # Convert list to array
+mean_ensemble_combined <- apply(ensemble_array, c(1,2,3), mean, na.rm = TRUE) #time mean
+
+# Create an array to store Gini indices
+gini_values_combined <- matrix(NA, nrow = 192, ncol = 96)
+
+# Loop through each grid cell and compute Gini index over time
+for (i in 1:192) {
+  for (j in 1:96) {
+    gini_values_combined[i, j] <- Gini(mean_ensemble_combined[i, j, ], na.rm = TRUE)
+  }
+}
+
+```
+
+plot epoch wise GINI index
+
+```{r}
+#plot map with 1850 GINI index
+#Convert data into raster object
+
+r <- raster(t(gini_values_1850), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84" # Set CRS for raster
+r <- flip(r, direction='y') #Flip the raster to correct orientation
+#Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs=st_crs(r)) #Ensure CRS alignment
+#Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+#Convert the masked raster to a dataframe for ggplot
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")
+
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill = layer), na.rm = TRUE) +
+  scale_fill_bs5("#E5973B", limits = c(0, 0.4)) +  
+  labs(title = "GINI Index 1850 epoch (EM)", x= "Longitude", y="Latitude") +
+  theme_classic() +
+  geom_sf(data=land, fill=NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand=FALSE)+
+  theme(legend.title = element_text(size=12), legend.text = element_text(size=10)) +
+  guides(fill = guide_legend(title = "Gini index", reverse = TRUE))
+```
+
+
+```{r}
+#plot map with 1420 GINI index
+#Convert data into raster object
+
+r <- raster(t(gini_values_1420), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84" # Set CRS for raster
+r <- flip(r, direction='y') #Flip the raster to correct orientation
+#Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs=st_crs(r)) #Ensure CRS alignment
+#Mask the raster with land polygons to remove ocean values
+#r_masked <- mask(r, as(land, "Spatial"))
+#Convert the masked raster to a dataframe for ggplot
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")
+
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill = layer), na.rm = TRUE) +
+  scale_fill_bs5("#E5973B", limits = c(0, 0.4)) +  
+  labs(title = "GINI Index 1420 epoch (EM)", x= "Longitude", y="Latitude") +
+  theme_classic() +
+  geom_sf(data=land, fill=NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand=FALSE)+
+  theme(legend.title = element_text(size=12), legend.text = element_text(size=10)) +
+  guides(fill = guide_legend(title = "Gini index", reverse = TRUE))
+```
+
+```{r}
+library(ggsci)
+#combined epochs: 
+
+#plot map with 1420 GINI index
+#Convert data into raster object
+
+r <- raster(t(gini_values_combined), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84" # Set CRS for raster
+r <- flip(r, direction='y') #Flip the raster to correct orientation
+#Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs=st_crs(r)) #Ensure CRS alignment
+#Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+#Convert the masked raster to a dataframe for ggplot
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")
+
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill = layer), na.rm = TRUE) +
+  scale_fill_gradientn(
+    colours = c("#EBD2CF", "#D49E98", "#BF6D63", "#7D3028", "#330B06"),
+    limits = c(0.0, 0.4),
+    name = "Gini Index"
+  ) +
+  labs(title = "Mean Gini over 600 years", x= "Longitude", y="Latitude") +
+  theme_classic() +
+  geom_sf(data=land, fill=NA, color = "black", lwd = 0.3) +
+  #coord_sf(xlim = range(lon), ylim = range(lat), expand=FALSE)+
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.title = element_text(size=13), legend.text = element_text(size=13), 
+        axis.text = element_text(size=13), axis.title = element_text(size=12)) +
+  guides(fill = guide_legend(title = "Gini index", reverse = TRUE))
+
+```
+
+### Gini timeseries
+
+Create and plot Gini timeseries with 30-year moving window for each region: 
+
+```{r}
+####################### Compute running GINI timeseries for each EM #########################
+################## 1420 epoch #############
+window_size <- 31  # Define window size
+
+###################### Compute 30-year moving Gini coefficients
+# Initialize lists to store Gini values
+regional_gini_1420 <- list()
+
+# Loop over regions
+for (region_name in names(regional_results_1420)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_results_1420[[region_name]]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store Gini values (one per ensemble member per time step)
+  gini_window <- matrix(NA, nrow = num_years - window_size + 1, ncol = ncol(ensemble_members))
+  
+  # Compute 30-year moving Gini values for each ensemble member
+  for (t in 1:(num_years - window_size + 1)) {  # Prevent going out of bounds
+    
+    # Loop over ensemble members
+    for (member in 1:ncol(ensemble_members)) {
+      
+      # Extract data for the current window
+      window_data <- ensemble_members[t:(t + window_size - 1), member]
+      
+      # Compute Gini coefficient for this ensemble member
+      gini_window[t, member] <- Gini(window_data, na.rm = TRUE)
+    }
+  }
+  
+  # Store results
+  regional_gini_1420[[region_name]] <- gini_window
+}
+
+###################### Compute Mean Gini across Ensemble Members
+# Initialize a list to store mean Gini values
+mean_gini_1420 <- list()
+
+# Loop over regions
+for (region_name in names(regional_gini_1420)) {
+  
+  # Compute the mean Gini coefficient across ensemble members for each time step
+  mean_gini_1420[[region_name]] <- rowMeans(regional_gini_1420[[region_name]], na.rm = TRUE)
+}
+
+
+################## 1850 epoch #############
+window_size <- 31  # Define window size
+
+###################### Compute 30-year moving Gini coefficients
+# Initialize lists to store Gini values
+regional_gini_1850 <- list()
+
+# Loop over regions
+for (region_name in names(regional_results_1850)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_results_1850[[region_name]]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store Gini values (one per ensemble member per time step)
+  gini_window <- matrix(NA, nrow = num_years - window_size + 1, ncol = ncol(ensemble_members))
+  
+  # Compute 30-year moving Gini values for each ensemble member
+  for (t in 1:(num_years - window_size + 1)) {  # Prevent going out of bounds
+    
+    # Loop over ensemble members
+    for (member in 1:ncol(ensemble_members)) {
+      
+      # Extract data for the current window
+      window_data <- ensemble_members[t:(t + window_size - 1), member]
+      
+      # Compute Gini coefficient for this ensemble member
+      gini_window[t, member] <- Gini(window_data, na.rm = TRUE)
+    }
+  }
+  
+  # Store results
+  regional_gini_1850[[region_name]] <- gini_window
+}
+
+###################### Compute Mean Gini across Ensemble Members
+# Initialize a list to store mean Gini values
+mean_gini_1850 <- list()
+
+# Loop over regions
+for (region_name in names(regional_gini_1850)) {
+  
+  # Compute the mean Gini coefficient across ensemble members for each time step
+  mean_gini_1850[[region_name]] <- rowMeans(regional_gini_1850[[region_name]], na.rm = TRUE)
+}
+
+```
+
+```{r}
+##mean GINI 1420 timeseries with all regions in one plot
+# Convert list to long-format data frame
+df_gini <- bind_rows(
+  lapply(names(mean_gini_1420), function(region) {
+    tibble(
+      year = 1435:1834,  # Assuming a running window of 400 years
+      gini_value = mean_gini_1420[[region]],
+      region = region
+    )
+  })
+)
+
+# Add continent column
+df_gini$continent <- sapply(df_gini$region, function(r) {
+  continent <- names(continent_mapping)[sapply(continent_mapping, function(regions) r %in% regions)]
+  return(continent)
+})
+
+# Define continent colors
+continent_colors <- c(
+  "Europe" = "#F5B0CB",
+  "North America" = "#236A3F",
+  "Africa" = "#91C7B1",
+  "Asia" = "#E5973B",
+  "Central America" = "#B33951",
+  "South America" = "#E3D081",
+  "Australia" = "#3C3980",
+  "Ocean" = "white"
+)
+# Convert continent to factor for proper ordering
+df_gini$continent <- factor(df_gini$continent, levels = names(continent_colors))
+
+# Compute global mean Gini index per year
+df_global_mean <- df_gini %>%
+  group_by(year) %>%
+  summarise(global_mean_gini = mean(gini_value, na.rm = TRUE))
+
+# Plot with both regional and global mean
+ggplot(df_gini, aes(x = year, y = gini_value, color = continent, group = region)) +
+  geom_line() +  # Regional lines
+  geom_line(data = df_global_mean, aes(x = year, y = global_mean_gini), 
+            color = "black", linewidth = 1.2) +  # Global mean in black
+  scale_color_manual(values = continent_colors) +  # Apply continent colors
+   scale_y_continuous(breaks = seq(0, 1, by = 0.05)) +  # y-axis ticks every 0.05
+  theme_minimal() +
+  labs(title = "30-Year Running Gini Index by IPCC Region",
+       x = "Year",
+       y = "Gini Index",
+       color = "Region") +
+  theme(legend.position = "none")
+
+##############################################################
+##mean GINI 1850 timeseries with all regions in one plot
+# Convert list to long-format data frame
+df_gini <- bind_rows(
+  lapply(names(mean_gini_1850), function(region) {
+    tibble(
+      year = 1865:1994,  # Assuming a running window of 400 years
+      gini_value = mean_gini_1850[[region]],
+      region = region
+    )
+  })
+)
+
+# Add continent column
+df_gini$continent <- sapply(df_gini$region, function(r) {
+  continent <- names(continent_mapping)[sapply(continent_mapping, function(regions) r %in% regions)]
+  return(continent)
+})
+
+# Define continent colors
+continent_colors <- c(
+  "Europe" = "#F5B0CB",
+  "North America" = "#236A3F",
+  "Africa" = "#91C7B1",
+  "Asia" = "#E5973B",
+  "Central America" = "#B33951",
+  "South America" = "#E3D081",
+  "Australia" = "#3C3980",
+  "Ocean" = "white"
+)
+# Convert continent to factor for proper ordering
+df_gini$continent <- factor(df_gini$continent, levels = names(continent_colors))
+
+# Compute global mean Gini index per year
+df_global_mean <- df_gini %>%
+  group_by(year) %>%
+  summarise(global_mean_gini = mean(gini_value, na.rm = TRUE))
+
+# Plot with both regional and global mean
+ggplot(df_gini, aes(x = year, y = gini_value, color = continent, group = region)) +
+  geom_line() +  # Regional lines
+  geom_line(data = df_global_mean, aes(x = year, y = global_mean_gini), 
+            color = "black", linewidth = 1.2) +  # Global mean in black
+  scale_color_manual(values = continent_colors) +  # Apply continent colors
+   scale_y_continuous(breaks = seq(0, 1, by = 0.05)) +  # y-axis ticks every 0.05
+  scale_x_continuous(breaks = seq(1880, 1980, by = 50)) +  # y-axis ticks every 0.05
+  theme_minimal() +
+  labs(title = "30-Year Running Gini Index by IPCC Region",
+       x = "Year",
+       y = "Gini Index",
+       color = "Region") +
+  theme(legend.position = "none", axis.text = element_text(size=12), axis.title = element_text(size = 12))
+
+```
+
+
+

@@ -1,0 +1,518 @@
+---
+title: "PCWD_maxlen_analysis"
+author: "Patricia Helpap"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, echo=FALSE}
+library(readr)
+library(dplyr)
+library(here)
+library(lubridate)
+library(patchwork)
+library(extRemes)
+library(ggplot2)
+library(cwd)
+library(ncdf4)
+library(reshape2)
+library(ggpubr)
+library(maps)
+library(raster)
+library(rnaturalearth)
+library(sf)
+library(rgdal)
+library(sp)
+library(RColorBrewer)
+library(rJava)
+library(loadeR.java)
+library(transformeR)
+library(loadeR)
+library(visualizeR)
+library(geoprocessoR)
+library(tidyverse)
+library(abind)
+library(patchwork)
+library(gridExtra)
+```
+
+# Calculating regional averages of drought duration values 
+
+```{r regions setup, echo=FALSE, warning=FALSE, message=FALSE}
+#Load reference regions and coastlines:
+
+load("/storage/homefs/ph23v078/Reference_regions/IPCC-WGI-reference-regions-v4_R.rda", verbose = TRUE)
+
+#simplify this object by converting it to a SpatialPolygons class object (i.e., only the polygons are retained and their attributes discarded):
+refregions <- as(IPCC_WGI_reference_regions_v4, "SpatialPolygons")
+
+temp.dir <- tempdir()
+unzip("/storage/homefs/ph23v078/Reference_regions/ne_110m_coastline.zip", exdir = temp.dir)
+coastLines <- readOGR(dsn = temp.dir, layer = "ne_110m_coastline")
+
+names(names(refregions))
+
+proj4string(refregions)
+WCE <- refregions[c("WCE")] #spatial polygon for Western Central Europe
+
+```
+
+Load IPCC reference region information
+```{r map of regions, echo=FALSE, warning=FALSE, message=FALSE}
+# Convert `refregions` (SpatialPolygons) to an `sf` object for ggplot compatibility
+refregions_sf <- st_as_sf(refregions)
+
+# Define continent assignments
+continent_mapping <- list(
+  "Europe" = c("NEU", "WCE", "EEU", "MED"),
+  "North America" = c("NWN", "NEN", "WNA", "CNA", "ENA", "GIC"),
+  "Africa" = c("SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG"),
+  "Asia" = c("WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "WSB", "ESB", "RFE", "RAR"),
+  "Central America" =c("NCA", "SCA", "CAR"),
+  "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
+  "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
+)
+
+# Assign continents to regions
+refregions_sf <- refregions_sf %>%
+  mutate(
+    continent = case_when(
+      row.names(refregions) %in% continent_mapping$Europe ~ "Europe",
+      row.names(refregions) %in% continent_mapping$`North America` ~ "North America",
+      row.names(refregions) %in% continent_mapping$Africa ~ "Africa",
+      row.names(refregions) %in% continent_mapping$Asia ~ "Asia",
+      row.names(refregions) %in% continent_mapping$`Central America` ~ "Central America",
+      row.names(refregions) %in% continent_mapping$`South America` ~ "South America",
+      row.names(refregions) %in% continent_mapping$Australia ~ "Australia",
+      TRUE ~ "Other"  # For regions not mapped to a continent
+    )
+  ) 
+# Define continent colors
+continent_colors <- c(
+  "Europe" = "pink",
+  "North America" = "lightgreen",
+  "Africa" = "purple",
+  "Asia" = "orange",
+  "Central America" = "lightblue",
+  "South America" = "yellow",
+  "Australia" = "blue",
+  "Other" = "white"
+)
+
+# Extract region centroids for labeling
+region_labels <- refregions_sf %>%
+  st_centroid() %>%
+  mutate(label = row.names(refregions))  # Add region names as labels
+
+
+# Load land data for filling continents
+land <- ne_countries(scale = "medium", returnclass = "sf")
+```
+
+
+Spatial average for WCE only for development:
+```{r read in EMs WCE only, echo=FALSE, message=FALSE, warning=FALSE}
+#here reading in only for WCE region for development
+#aggregate EM for region i.e. 2 for loops, 1 looping over EMs, second looping over region, aggregating into one file
+
+###############################read in data##################################
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim"
+folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}_tidy")
+
+# Identify the target files
+target_files <- file.path(folders, "02_2_pcwd_result_1850/PCWD_maxlen.nc")
+target_files <- target_files[file.exists(target_files)]
+
+
+#################################all EMS#######################################
+#e.g. loop for EMs: ### append data i.e. get rid of time dimension and just append to exisiting data
+# Extract unique ensemble member identifiers from folder names
+ensemble_members <- unique(basename(folders))
+
+# Initialize an empty list to store spatial averages for each file
+spatial_avg_list <- list()
+
+# Loop over all ensemble member folders
+for (em in ensemble_members) {
+  # Construct the folder path for the current ensemble member
+  folder <- file.path(path, em)
+  # Construct file paths for the two time periods
+  file_1420 <- file.path(folder, "02_2_pcwd_result_1420/PCWD_maxlen.nc")
+  file_1850 <- file.path(folder, "02_2_pcwd_result_1850/PCWD_maxlen.nc")
+  
+  # Check if both files exist
+  if (file.exists(file_1420) && file.exists(file_1850)) {
+    # Load grid data for each time period
+    grid_1420 <- loadGridData(dataset = file_1420, var = "pcwd_maxlen")
+    grid_1850 <- loadGridData(dataset = file_1850, var = "pcwd_maxlen")
+    
+    # Set spatial projection
+    grid_1420 <- setGridProj(grid = grid_1420, proj = proj4string(refregions))
+    grid_1850 <- setGridProj(grid = grid_1850, proj = proj4string(refregions))
+    
+    # Perform spatial overlay
+    grid.eu_1420 <- overGrid(grid_1420, WCE)
+    grid.eu_1850 <- overGrid(grid_1850, WCE)
+    
+    # Extract data arrays
+    data_array_1420 <- grid.eu_1420$Data[1:430,,]
+    data_array_1850 <- grid.eu_1850$Data
+    
+    # Combine data arrays along the time dimension
+    combined_data_array <- abind::abind(data_array_1420, data_array_1850, along = 1)
+    
+    # Compute spatial average for each time step
+    spatial_avg <- apply(combined_data_array, 1, function(slice) {
+      mean(slice, na.rm = TRUE) # Compute mean for the spatial dimensions, ignoring NA
+    })
+    
+    # Store the spatial average in the list
+    spatial_avg_list[[em]] <- spatial_avg
+  } else {
+    warning(paste("Missing data for ensemble member:", em))
+  }
+}
+
+# Combine all spatial averages into a single array with dimensions 160 x EMs
+result_array.wce <- do.call(cbind, spatial_avg_list)
+
+# Check the result
+#dim(result_array.wce) # Should be 160 x EMs
+```
+
+```{r plot all EMs as spaghetti}
+# Assuming your years range from 1420 to 2009
+years <- 1420:2009
+
+# Convert the matrix to a data frame
+result_df <- as.data.frame(result_array.wce)
+
+# Add a column for years
+result_df$Year <- years
+
+
+# Reshape to long format
+result_long <- pivot_longer(
+  result_df,
+  cols = -Year,  # All columns except 'Year' are to be gathered
+  names_to = "Ensemble_Member",
+  values_to = "Duration"
+)
+
+# # Create the spaghetti plot
+# ggplot(result_long, aes(x = Year, y = Duration, color = Ensemble_Member)) +
+#   geom_line() +
+#   labs(
+#     title = "Drought Duration for WCE",
+#     x = "Year",
+#     y = "Max Drought Duration (days)",
+#     color = "Ensemble Member"
+#   ) +
+#   theme_classic() +
+#   ylim(0, 2000) +  # Set y-axis limits
+#   theme(legend.position = "right")
+
+# Specify the ensemble member you want to plot
+ensemble_to_plot <- "m015_tidy"
+
+# Filter the data for the chosen ensemble member
+filtered_data <- result_long %>%
+  filter(Ensemble_Member == ensemble_to_plot)
+
+# Create the plot for the single ensemble member
+ggplot(filtered_data, aes(x = Year, y = Duration)) +
+  geom_line(color = "blue") +  # Set the line color
+  labs(
+    title = paste("Plot of", ensemble_to_plot, "Over Time"),
+    x = "Year",
+    y = "Max Drought Duration (days)"
+  ) +
+  theme_classic()
+
+```
+
+Calculate regional averages of maxlen data:
+```{r read in EMS all regions, eval=FALSE, echo=FALSE}
+###############################read in data##################################
+#as before but loop over all regions also, saving everything in an array
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim"
+folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}_tidy")
+
+# Identify the target files
+target_files <- file.path(folders, "02_2_pcwd_result_1850/PCWD_maxlen.nc")
+target_files <- target_files[file.exists(target_files)]
+
+# Extract unique ensemble member identifiers from folder names
+ensemble_members <- unique(basename(folders))
+
+# # List of regions to loop over --- remove ocean basins
+# regions <- c("GIC", "NWN", "NEN", "WNA", "CNA", "ENA", "NCA", "SCA", "CAR", "NWS",
+#              "NSA", "NES", "SAM", "SWS", "SES", "SSA", "NEU", "WCE", "EEU", "MED",
+#              "SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG", "RAR", "WSB",
+#              "ESB", "RFE", "WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "NAU",
+#              "CAU", "EAU", "SAU", "NZ")
+regions <- c("NZ")
+# Initialize a list to store results for all regions
+regional_results <- list()
+
+# Loop over all regions
+for (region in regions) {
+  # Extract the spatial object corresponding to the current region
+  region_object <- refregions[c(region)]
+  
+  # Check if the subset is valid
+  if (is.null(region_object)) {
+    warning(paste("Region not found:", region))
+    next
+  }
+  
+  # Initialize a list to store spatial averages for each file in the current region
+  spatial_avg_list <- list()
+  
+  # Loop over all ensemble member folders
+  # Loop over all ensemble member folders
+  for (em in ensemble_members) {
+    # Construct the folder path for the current ensemble member
+    folder <- file.path(path, em)
+   # Construct file paths for the two time periods
+   file_1420 <- file.path(folder, "02_2_pcwd_result_1420/PCWD_maxlen.nc")
+   file_1850 <- file.path(folder, "02_2_pcwd_result_1850/PCWD_maxlen.nc")
+  
+   # Check if both files exist
+   if (file.exists(file_1420) && file.exists(file_1850)) {
+    # Load grid data for each time period
+    grid_1420 <- loadGridData(dataset = file_1420, var = "pcwd_maxlen")
+    grid_1850 <- loadGridData(dataset = file_1850, var = "pcwd_maxlen")
+      
+      # Set spatial projection
+      grid_1420 <- setGridProj(grid = grid_1420, proj = proj4string(refregions))
+      grid_1850 <- setGridProj(grid = grid_1850, proj = proj4string(refregions))
+      
+      # Perform spatial overlay for the current region
+      grid_region_1420 <- overGrid(grid_1420, region_object)
+      grid_region_1850 <- overGrid(grid_1850, region_object)
+      
+      # Extract data arrays
+      data_array_1420 <- grid_region_1420$Data[1:430,,]
+      data_array_1850 <- grid_region_1850$Data
+      
+      # Combine data arrays along the time dimension
+      combined_data_array <- abind::abind(data_array_1420, data_array_1850, along = 1)
+      
+      # Compute spatial average for each time step
+      spatial_avg <- apply(combined_data_array, 1, function(slice) {
+        mean(slice, na.rm = TRUE) # Compute mean for the spatial dimensions, ignoring NA
+      })
+      
+      # Store the spatial average in the list
+      spatial_avg_list[[em]] <- spatial_avg
+    } else {
+      warning(paste("Missing data for ensemble member:", em, "in region:", region))
+    }
+  }
+  
+  # Combine all spatial averages into a single array for the current region
+  result_array_region <- do.call(cbind, spatial_avg_list)
+  
+  # Store the result for the current region
+  regional_results[[region]] <- result_array_region
+}
+
+#save calculated list
+saveRDS(regional_results, file="~/cwd_global/data/regionalResults_duration.RData")
+
+#Load with
+regional_results_test <- readRDS("~/cwd_global/data/regionalResults_duration.RData")
+
+```
+
+## Trend analysis of duration values
+
+```{r}
+#remove m001: 
+# List of regions where the first ensemble member should be removed
+regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+
+# Loop through each specified region and remove the first column (m001_tidy)
+for (region in regions_to_modify) {
+  regional_results_test[[region]] <- regional_results_test[[region]][, -1]
+}
+```
+
+Calculate running window trends
+```{r}
+#running window trend analysis with 31 or 101 year windows - 1420 epoch
+
+# Define parameters
+years <- 1420:(1420 + 590 - 1)  # Year range based on data length
+window_size <- 31  # Moving window size
+# window_size <- 101  # Moving window size
+
+# Initialize a list to store results
+ensemble_trends_dur <- list()
+
+for (region in names(regional_results_test)) {
+  # Extract data for the current region
+  data <- regional_results_test[[region]]  # Each column is an ensemble member
+  n_years <- nrow(data)
+  n_ensembles <- ncol(data)
+  
+  # Initialize a matrix to store trends (rows = years, cols = ensemble members)
+  trends_matrix <- matrix(NA, nrow = n_years - window_size + 1, ncol = n_ensembles)
+  midpoint_years <- years[1:(n_years - window_size + 1)] + (window_size - 1) / 2
+  rownames(trends_matrix) <- midpoint_years
+  colnames(trends_matrix) <- paste0("Member_", 1:n_ensembles)
+  
+  # Loop through each ensemble member
+  for (i in 1:n_ensembles) {
+    ensemble_data <- data[, i]  # Extract the ensemble member data
+    
+    # Calculate moving window trends
+    for (start_year in 1:(n_years - window_size + 1)) {
+      end_year <- start_year + window_size - 1
+      window_years <- years[start_year:end_year]
+      window_data <- ensemble_data[start_year:end_year]
+      
+      # Fit a linear model to the moving window
+      if (all(!is.na(window_data))) {  # Check for missing values
+        model <- lm(window_data ~ window_years)
+        trends_matrix[start_year, i] <- coef(model)[2]  # Extract the slope
+      }
+    }
+  }
+  
+  # Save the trend matrix for the region
+  ensemble_trends_dur[[region]] <- trends_matrix
+}
+
+saveRDS(ensemble_trends_dur, file="~/cwd_global/data/droughtLEN_30yr_trends.RData")  ## 30 year trends
+
+```
+
+Example: Visualize trends for one ensemble member in one region
+```{r}
+region <- "MED"  # Specify region
+ensemble <- 1  # Specify ensemble member
+
+plot(as.numeric(rownames(ensemble_trends_dur[[region]])),
+     ensemble_trends_dur[[region]][, ensemble], type = "l",
+     main = paste("30-Year Moving Trends for", region, "- Member", ensemble),
+     xlab = "Year", ylab = "Trend (mm/yr)")
+```
+Calculate ensemble mean trends: 
+
+```{r}
+# Initialize lists to store results
+ensemble_means_dur <- list()  # Mean for each region
+
+# Loop over regions
+for (region_name in names(ensemble_trends_dur)) {
+  
+  # Get the trends matrix for the region (time steps x ensemble members)
+  trends_matrix <- ensemble_trends_dur[[region_name]]
+  
+  # Calculate mean and standard deviation across ensemble members
+  # Mean across rows (time steps)
+  ensemble_means_dur[[region_name]] <- rowMeans(trends_matrix, na.rm = TRUE)
+
+}
+```
+
+Plot time series of duration trends
+
+```{r}
+#create dataframe
+
+# Define continent colors
+continent_colors <- c(
+  "Europe" = "#F5B0CB",
+  "North America" = "#236A3F",
+  "Africa" = "#91C7B1",
+  "Asia" = "#E5973B",
+  "Central America" = "#B33951",
+  "South America" = "#E3D081",
+  "Australia" = "#3C3980",
+  "Ocean" = "white"
+)
+
+# Define continent assignments
+continent_mapping <- list(
+  "Europe" = c("NEU", "WCE", "EEU", "MED"),
+  "North America" = c("NWN", "NEN", "WNA", "CNA", "ENA", "GIC"),
+  "Africa" = c("SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG"),
+  "Asia" = c("WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "WSB", "ESB", "RFE", "RAR"),
+  "Central America" =c("NCA", "SCA", "CAR"),
+  "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
+  "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
+)
+
+# Convert ensemble data into a long format for plotting individual members
+duration_trends_long <- do.call(rbind, lapply(names(ensemble_trends_dur), function(region) {
+  df <- as.data.frame(ensemble_trends_dur[[region]])
+  df$time <- seq(1435, 1994)  # Adjust time range accordingly
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region),names_to = "ensemble_member", values_to = "trend")
+  return(df_long)
+}))
+
+# Add a continent column
+duration_trends_long$continent <- NA  # Initialize continent column
+for (continent in names(continent_mapping)) {
+  duration_trends_long$continent[duration_trends_long$region %in% continent_mapping[[continent]]] <- continent
+}
+
+```
+
+```{r}
+### Plot for each region
+# Filter for selected continent
+selected_continent <- "Europe"
+duration_trends_long_fil <- duration_trends_long %>% filter(continent == selected_continent)
+
+
+# Compute mean anomalies per (time, region)
+mean_duration_trends_long_fil<- duration_trends_long_fil %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_trends = mean(trend, na.rm = TRUE),
+  ) %>%
+  ungroup()
+
+
+ggplot() +
+  geom_hline(yintercept = 0, color= "darkgrey", linetype="dashed")+
+  # Plot individual ensemble members with distinct colors
+  #geom_line(data = duration_trends_long_fil, aes(x = time, y = trend, group = ensemble_member, color = factor("Ensemble Members")), alpha = 0.5, linewidth = 0.3, show.legend = TRUE)+
+  # Plot mean anomaly as a bold line
+  geom_line(data = mean_duration_trends_long_fil, aes(x = time, y = mean_trends, color = factor("ModESim")), linewidth = 1, show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "drought length 30-year trends",
+    title = paste("30yr rolling duration trends", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("Ensemble Members" = "#7EA3CC","ModESim" = "#255C99" ),
+    labels = c("Ensemble Members","Length (Mean) - ModESim" )
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 10),
+    strip.background = element_rect(fill = "#F5B0CB"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+
+  facet_wrap(~region, scales = "free_y")
+```

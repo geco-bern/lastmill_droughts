@@ -1,0 +1,2055 @@
+---
+title: "Analysis of volcanic forcing on PCWD"
+author: "Patricia Helpap"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, echo=FALSE}
+library(readr)
+library(dplyr)
+library(here)
+library(lubridate)
+library(patchwork)
+library(ggplot2)
+library(cwd)
+library(ncdf4)
+library(reshape2)
+library(ggpubr)
+library(maps)
+library(raster)
+library(rnaturalearth)
+library(sf)
+library(rgdal)
+library(sp)
+library(RColorBrewer)
+library(rJava)
+library(loadeR.java)
+library(transformeR)
+library(loadeR)
+library(visualizeR)
+library(geoprocessoR)
+library(tidyverse)
+library(abind)
+library(patchwork)
+library(gridExtra)
+library(ggsci)
+```
+
+## Analysis of volcanic forcing impact on hydroclimatic (PCWD, P, PET) variables after large volcanic eruptions
+
+
+#### Overview of epoch 1 volcanic eruptions:
+Select AOD > 0.01 for large stratospheric eruptions
+
+```{r}
+aod_1420_df$year <- format(aod_1420_df$dates, "%Y")
+
+# Check the result
+head(aod_1420_df)
+
+# Line plot
+ggplot(aod_1420_df, aes(x = dates, y = mean_value)) +
+  geom_line(color = "#5BC0EB", linewidth = 1) +  # Line plot
+  labs(title = "Global Mean Volcanic AOD", 
+       x = "Year", 
+       y = "AOD (μm)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels if needed
+
+###
+# Find the eruption peak month for each eruption (grouped by year)
+# Vector of eruption years you want to keep (as characters to match your df)
+eruption_years <- c("1457","1458","1599", "1600", "1640","1641","1694", "1695","1782" ,"1783", "1808","1809","1814", "1815", "1830","1831") #8 largest eruption peaks + years before that
+
+# Filter only the years you care about
+eruption_peaks <- aod_1420_df %>%
+  filter(year %in% eruption_years) %>%
+  group_by(year) %>%
+  # Keep the month with the largest *increase* in AOD
+  filter(mean_value == max(mean_value, na.rm = TRUE)) %>%
+  ungroup()
+
+eruption_peak_years <- c("1458","1600", "1641","1695","1783", "1809","1815", "1831") #8 largest eruptions
+eruption_onset_years <- c("1457","1599", "1640","1694","1782", "1808","1814", "1830") #8 largest eruptions
+eruption_onsets <- eruption_peaks %>%
+  filter(year %in% eruption_onset_years)
+eruption_peaks_pl <- eruption_peaks %>%
+  filter(year %in% eruption_peak_years)
+         
+eruption_dates<-eruption_peaks_pl$dates
+
+# Line plot
+ggplot() +
+geom_line(data = aod_1420_df, aes(x = dates, y = mean_value),color = "#5BC0EB", linewidth = 0.8) +  # Line plot
+geom_point(data = eruption_onsets, aes(x = dates, y = mean_value),color = "#FDE74C", size = 1.5) +  # point plot
+geom_point(data = eruption_peaks_pl, aes(x = dates, y = mean_value),color = "#9BC53D", size = 1.5) +  # Line plot
+  labs(title = "Global Mean Volcanic AOD", 
+       x = "Year", 
+       y = "AOD (μm)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels if needed
+
+```
+
+
+Read in extracted annmax pcwd, annual total precip and total pet data for 1420-1450, 1783, 1784, 1815 and 1816
+
+```{r}
+##get dimensions from one ensemble member
+nc_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet/m020/tot_precip_tot_p_pet.nc"
+nc_precip <- nc_open(nc_file)
+precip <- ncvar_get(nc_precip, varid = "tot_precip")
+lat <- ncvar_get(nc_precip, varid = "lat")
+lon <- ncvar_get(nc_precip, varid = "lon")
+time <- ncvar_get(nc_precip,varid = "time")
+nc_close(nc_precip)
+
+nc_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet/m019/tot_pet_tot_p_pet.nc"
+nc_pet <- nc_open(nc_file)
+pet <- ncvar_get(nc_pet, varid = "tot_pet")
+nc_close(nc_pet)
+
+nc_file <-"/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet/m019/max_deficit_tot_p_pet.nc"
+nc_pcwd <- nc_open(nc_file)
+pcwd <- ncvar_get(nc_pcwd, varid = "max_deficit")
+nc_close(nc_pcwd)
+
+reference_date <- as.Date("2001-01-01")
+time_dates <- reference_date + time
+```
+
+
+Create composites of ensemble for each variable
+PRECIP
+```{r}
+#### total precipitation: 
+# Define the base path
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "tot_precip_tot_p_pet.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_precip <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "tot_precip"))[1]
+dim_y <- dim(ncvar_get(nc, "tot_precip"))[2]
+dim_z <- dim(ncvar_get(nc, "tot_precip"))[3]
+nc_close(nc)
+
+# Convert time variable to actual dates (assuming "days since 2001-01-01")
+reference_date <- as.Date("2001-01-01")
+time_dates <- reference_date + time
+
+# Find indices corresponding to years >= 1968
+years <- as.numeric(format(time_dates, "%Y"))
+
+# Loop through all the target files and filter data
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "tot_precip")  # Adjust "pcwd_annmax" to your variable name
+
+  data_by_ensemble_precip[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_precip))  # Check stored ensemble members
+print(dim(data_by_ensemble_precip[[1]]))  # Check dimensions of the data for the first ensemble member
+
+
+
+```
+
+PET
+```{r}
+#### total precipitation: 
+# Define the base path
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "tot_pet_tot_p_pet.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_pet <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "tot_pet"))[1]
+dim_y <- dim(ncvar_get(nc, "tot_pet"))[2]
+dim_z <- dim(ncvar_get(nc, "tot_pet"))[3]
+nc_close(nc)
+
+# Convert time variable to actual dates (assuming "days since 2001-01-01")
+reference_date <- as.Date("2001-01-01")
+time_dates <- reference_date + time
+
+# Find indices corresponding to years >= 1968
+years <- as.numeric(format(time_dates, "%Y"))
+
+# Loop through all the target files and filter data
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "tot_pet")  # Adjust "pcwd_annmax" to your variable name
+
+  data_by_ensemble_pet[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_pet))  # Check stored ensemble members
+print(dim(data_by_ensemble_pet[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+PCWD
+```{r}
+#### total precipitation: 
+# Define the base path
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/volcanicYears_extracted_p_pet/collected_p_pet"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "max_deficit_tot_p_pet.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_pcwd <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "max_deficit"))[1]
+dim_y <- dim(ncvar_get(nc, "max_deficit"))[2]
+dim_z <- dim(ncvar_get(nc, "max_deficit"))[3]
+nc_close(nc)
+
+# Convert time variable to actual dates (assuming "days since 2001-01-01")
+reference_date <- as.Date("2001-01-01")
+time_dates <- reference_date + time
+
+# Find indices corresponding to years >= 1968
+years <- as.numeric(format(time_dates, "%Y"))
+
+# Loop through all the target files and filter data
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "max_deficit")  # Adjust "pcwd_annmax" to your variable name
+
+  data_by_ensemble_pcwd[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_pcwd))  # Check stored ensemble members
+print(dim(data_by_ensemble_pcwd[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+Calculate reference (1420-1450) mean for all variables
+```{r}
+#### precip
+ensemble_array_precip <- simplify2array(data_by_ensemble_precip)  # Shape: [192, 96, 42, 20]
+# Compute the ensemble mean across the 3rd dimension (time)
+ensemble_ref_precip <- apply(ensemble_array_precip[,,1:30,], c(1, 2, 4), mean, na.rm = TRUE)  # Shape: [192, 96, 20]
+dim(ensemble_ref_precip)
+
+#ensemble means for reference, 1783, 1784, 1815, 1816
+# Compute the ensemble mean across the 3rd dimension (time)
+mean_precip_ref <- apply(ensemble_ref_precip, c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+dim(mean_precip_ref)
+mean_precip_1783 <- apply(ensemble_array_precip[,,31,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+dim(mean_precip_1783)
+mean_precip_1784 <- apply(ensemble_array_precip[,,32,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+
+mean_precip_1815 <- apply(ensemble_array_precip[,,33,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+
+mean_precip_1816 <- apply(ensemble_array_precip[,,34,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+
+
+#### pet
+ensemble_array_pet <- simplify2array(data_by_ensemble_pet)  # Shape: [192, 96, 42, 20]
+# Compute the ensemble mean across the 3rd dimension (time)
+ensemble_ref_pet <- apply(ensemble_array_pet[,,1:30,], c(1, 2, 4), mean, na.rm = TRUE)  # Shape: [192, 96, 20]
+dim(ensemble_ref_pet)
+
+#ensemble means for reference, 1783, 1784, 1815, 1816
+# Compute the ensemble mean across the 3rd dimension (time)
+mean_pet_ref <- apply(ensemble_ref_pet, c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+dim(mean_pet_ref)
+mean_pet_1783 <- apply(ensemble_array_pet[,,31,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+dim(mean_pet_1783)
+mean_pet_1784 <- apply(ensemble_array_pet[,,32,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+
+mean_pet_1815 <- apply(ensemble_array_pet[,,33,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+
+mean_pet_1816 <- apply(ensemble_array_pet[,,34,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+
+
+#### annmax pcwd
+ensemble_array_pcwd <- simplify2array(data_by_ensemble_pcwd)  # Shape: [192, 96, 42, 20]
+# Compute the ensemble mean across the 3rd dimension (time)
+ensemble_ref_pcwd <- apply(ensemble_array_pcwd[,,1:30,], c(1, 2, 4), mean, na.rm = TRUE)  # Shape: [192, 96, 20]
+dim(ensemble_ref_pcwd)
+
+#ensemble means for reference, 1783, 1784, 1815, 1816
+# Compute the ensemble mean across the 3rd dimension (time)
+mean_pcwd_ref <- apply(ensemble_ref_pcwd, c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+dim(mean_pcwd_ref)
+mean_pcwd_1783 <- apply(ensemble_array_pcwd[,,31,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+dim(mean_pcwd_1783)
+mean_pcwd_1784 <- apply(ensemble_array_pcwd[,,32,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+
+mean_pcwd_1815 <- apply(ensemble_array_pcwd[,,33,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+
+mean_pcwd_1816 <- apply(ensemble_array_pcwd[,,34,], c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+
+
+```
+
+Maps for each year - ensemble mean
+
+```{r}
+################  Reference PCWD ###############
+r <- raster(t(mean_pcwd_ref), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249",
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f",
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+# 1) build a vector of human–readable labels
+#    for the finite intervals we do "a–b", 
+#    and then for the last one ">2000"
+finite_bins <- custom_bins[!is.infinite(custom_bins)]
+lbls_finite <- paste0(finite_bins[-length(finite_bins)], "–", finite_bins[-1])
+lbls <- c(lbls_finite, ">2000")
+
+# 2) turn your raster values into a factor with exactly these levels
+r_df$pcwd_cat <- cut(
+  r_df$layer, 
+  breaks = custom_bins, 
+  labels = lbls, 
+  include.lowest = TRUE, 
+  right = FALSE
+)
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Oceania
+
+
+# Define the ggplot2 object with the gradient scale
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = pcwd_cat), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = c("Ocean" = "grey50", setNames(custom_colors, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  labs(title = "Reference (1420-1450) PCWD", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################ 1783 PCWD ############
+r <- raster(t(mean_pcwd_1783), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# 2) turn your raster values into a factor with exactly these levels
+r_df$pcwd_cat <- cut(
+  r_df$layer, 
+  breaks = custom_bins, 
+  labels = lbls, 
+  include.lowest = TRUE, 
+  right = FALSE
+)
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = pcwd_cat), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = c("Ocean" = "grey50", setNames(custom_colors, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  labs(title = "1783 (volc year) PCWD", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################ 1784 PCWD ############
+r <- raster(t(mean_pcwd_1784), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# 2) turn your raster values into a factor with exactly these levels
+r_df$pcwd_cat <- cut(
+  r_df$layer, 
+  breaks = custom_bins, 
+  labels = lbls, 
+  include.lowest = TRUE, 
+  right = FALSE
+)
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = pcwd_cat), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = c("Ocean" = "grey50", setNames(custom_colors, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  labs(title = "1784 (volc year) PCWD", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################ 1815 PCWD ############
+r <- raster(t(mean_pcwd_1815), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# 2) turn your raster values into a factor with exactly these levels
+r_df$pcwd_cat <- cut(
+  r_df$layer, 
+  breaks = custom_bins, 
+  labels = lbls, 
+  include.lowest = TRUE, 
+  right = FALSE
+)
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = pcwd_cat), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = c("Ocean" = "grey50", setNames(custom_colors, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  labs(title = "1815 (volc year) PCWD", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################ 1816 PCWD ############
+r <- raster(t(mean_pcwd_1816), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# 2) turn your raster values into a factor with exactly these levels
+r_df$pcwd_cat <- cut(
+  r_df$layer, 
+  breaks = custom_bins, 
+  labels = lbls, 
+  include.lowest = TRUE, 
+  right = FALSE
+)
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = pcwd_cat), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = c("Ocean" = "grey50", setNames(custom_colors, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  labs(title = "1816 (volc year) PCWD", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+```
+
+PCWD percent reduction comparing 1783 to reference for each gridcell
+
+```{r}
+# 1) Compute percent reduction
+# new: percent change = (1783 - ref) / ref * 100
+pcwd_pct <- (mean_pcwd_1783 - mean_pcwd_ref) / mean_pcwd_ref * 100
+
+r <- raster(t(pcwd_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1783)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in PCWD: 1783 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+
+
+###1784: 
+# 1) Compute percent reduction
+# new: percent change = (1784 - ref) / ref * 100
+pcwd_pct <- (mean_pcwd_1784 - mean_pcwd_ref) / mean_pcwd_ref * 100
+
+r <- raster(t(pcwd_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1784)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in PCWD: 1784 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+
+
+# 1) Compute percent reduction
+# new: percent change = (1815 - ref) / ref * 100
+pcwd_pct <- (mean_pcwd_1815 - mean_pcwd_ref) / mean_pcwd_ref * 100
+
+r <- raster(t(pcwd_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1815)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in PCWD: 1815 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+
+
+
+# 1) Compute percent reduction
+# new: percent change = (1816 - ref) / ref * 100
+pcwd_pct <- (mean_pcwd_1816 - mean_pcwd_ref) / mean_pcwd_ref * 100
+
+r <- raster(t(pcwd_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1816)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in PCWD: 1816 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+
+
+```
+
+
+
+PET plots
+```{r}
+################  Reference PCWD ###############
+r <- raster(t(mean_pet_ref), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(-40,-20,0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, 3000)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+ custom_colors <- c( "#041A40",  "#084594", "#2171B5", "#4292C6", "#6BAED6","#9ECAE1", "#C6DBEF",  "#A1D99B", "#74C476", "#41AB5D", "#FFFFB2", "#FECC5C", "#FD8D3C", "#FC4E2A",  "#E31A1C",  "#BD0026",  "#800026")
+
+# simple interval labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],
+  "–",
+  custom_bins[-1]
+)
+# length(lbls) == 16
+
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total PET (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "Reference (1420-1450) PET", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PET [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################  1783 PCWD ###############
+r <- raster(t(mean_pet_1783), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(-40,-20,0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, 3000)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+ custom_colors <- c( "#041A40",   "#084594",  "#2171B5", "#4292C6",  "#6BAED6",  "#9ECAE1", "#C6DBEF", "#A1D99B", "#74C476","#41AB5D","#FFFFB2", "#FECC5C", "#FD8D3C","#FC4E2A", "#E31A1C",  "#BD0026", "#800026")
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total PET (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "1783 (volcanic year) PET", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PET [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################  1784 PCWD ###############
+r <- raster(t(mean_pet_1784), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(-40,-20,0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, 3000)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+ custom_colors <- c( "#041A40",   "#084594",  "#2171B5", "#4292C6",  "#6BAED6",  "#9ECAE1", "#C6DBEF", "#A1D99B", "#74C476","#41AB5D","#FFFFB2", "#FECC5C", "#FD8D3C","#FC4E2A", "#E31A1C",  "#BD0026", "#800026")
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total PET (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "1784 (volcanic year) PET", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PET [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+################  1815 PCWD ###############
+r <- raster(t(mean_pet_1815), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(-40,-20,0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, 3000)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+ custom_colors <- c( "#041A40",   "#084594",  "#2171B5", "#4292C6",  "#6BAED6",  "#9ECAE1", "#C6DBEF", "#A1D99B", "#74C476","#41AB5D","#FFFFB2", "#FECC5C", "#FD8D3C","#FC4E2A", "#E31A1C",  "#BD0026", "#800026")
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total PET (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "1815 (volcanic year) PET", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PET [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################  1816 PCWD ###############
+r <- raster(t(mean_pet_1816), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(-40,-20,0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, 3000)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+ custom_colors <- c( "#041A40",   "#084594",  "#2171B5", "#4292C6",  "#6BAED6",  "#9ECAE1", "#C6DBEF", "#A1D99B", "#74C476","#41AB5D","#FFFFB2", "#FECC5C", "#FD8D3C","#FC4E2A", "#E31A1C",  "#BD0026", "#800026")
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total PET (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "1816 (volcanic year) PET", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PET [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+```
+
+
+PET percent reduction comparing 1783 to reference for each gridcell
+
+```{r}
+# 1) Compute percent reduction
+# new: percent change = (1783 - ref) / ref * 100
+pet_pct <- (mean_pet_1783 - mean_pet_ref) / mean_pet_ref * 100
+
+r <- raster(t(pet_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1783)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in PET: 1783 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+
+
+###1784: 
+# 1) Compute percent reduction
+# new: percent change = (1784 - ref) / ref * 100
+pet_pct <- (mean_pet_1784 - mean_pet_ref) / mean_pet_ref * 100
+
+r <- raster(t(pet_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1784)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in PET: 1784 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+
+
+# 1) Compute percent reduction
+# new: percent change = (1815 - ref) / ref * 100
+pet_pct <- (mean_pet_1815 - mean_pet_ref) / mean_pet_ref * 100
+
+r <- raster(t(pet_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1815)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in PET: 1815 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+
+
+
+# 1) Compute percent reduction
+# new: percent change = (1816 - ref) / ref * 100
+pet_pct <- (mean_pet_1816 - mean_pet_ref) / mean_pet_ref * 100
+
+r <- raster(t(pet_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1816)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in PET: 1816 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+```
+
+
+
+PRECIP
+
+```{r}
+################  Reference Precip ###############
+r <- raster(t(mean_precip_ref), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 30, 50, 75, 100, 200, 300, 500, 700, 1000, 2000, 3000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Base 9-colour Brewer ramp
+base_pal <- brewer.pal(9, "GnBu")
+
+# Interpolate to 15 colours
+custom_colors <- colorRampPalette(base_pal)(13)
+ 
+# simple interval labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],
+  "–",
+  custom_bins[-1]
+)
+# length(lbls) == 16
+
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Oceania
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total Precip (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "Reference (1420-1450) Precipitation", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "P [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################  1783 Precip ###############
+r <- raster(t(mean_precip_1783), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 30, 50, 75, 100, 200, 300, 500, 700, 1000, 2000, 3000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Base 9-colour Brewer ramp
+base_pal <- brewer.pal(9, "GnBu")
+
+# Interpolate to 15 colours
+custom_colors <- colorRampPalette(base_pal)(13)
+ 
+# simple interval labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],
+  "–",
+  custom_bins[-1]
+)
+# length(lbls) == 16
+
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Oceania
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total Precip (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "1783 (volcanic year) Precipitation", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "P [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################  1784 Precip ###############
+r <- raster(t(mean_precip_1784), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 30, 50, 75, 100, 200, 300, 500, 700, 1000, 2000, 3000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Base 9-colour Brewer ramp
+base_pal <- brewer.pal(9, "GnBu")
+
+# Interpolate to 15 colours
+custom_colors <- colorRampPalette(base_pal)(13)
+ 
+# simple interval labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],
+  "–",
+  custom_bins[-1]
+)
+# length(lbls) == 16
+
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Oceania
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total Precip (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "1784 (volcanic year) Precipitation", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "P [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################  1815 Precip ###############
+r <- raster(t(mean_precip_1815), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 30, 50, 75, 100, 200, 300, 500, 700, 1000, 2000, 3000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Base 9-colour Brewer ramp
+base_pal <- brewer.pal(9, "GnBu")
+
+# Interpolate to 15 colours
+custom_colors <- colorRampPalette(base_pal)(13)
+ 
+# simple interval labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],
+  "–",
+  custom_bins[-1]
+)
+# length(lbls) == 16
+
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Oceania
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total Precip (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "1815 (volcanic year) Precipitation", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "P [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################  1816 Precip ###############
+r <- raster(t(mean_precip_1816), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 30, 50, 75, 100, 200, 300, 500, 700, 1000, 2000, 3000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Base 9-colour Brewer ramp
+base_pal <- brewer.pal(9, "GnBu")
+
+# Interpolate to 15 colours
+custom_colors <- colorRampPalette(base_pal)(13)
+ 
+# simple interval labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],
+  "–",
+  custom_bins[-1]
+)
+# length(lbls) == 16
+
+
+r_df$pet_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Oceania
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pet_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "total Precip (mm/yr)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "1816 (volcanic year) Precipitation", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "right", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "P [mm/yr]", reverse = TRUE))  # Adjust legend for better presentation
+
+```
+precip percent reduction comparing 1783 to reference for each gridcell
+
+```{r}
+# 1) Compute percent reduction
+# new: percent change = (1783 - ref) / ref * 100
+precip_pct <- (mean_precip_1783 - mean_precip_ref) / mean_precip_ref * 100
+
+r <- raster(t(precip_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1783)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in Precipitation: 1783 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% Δ P", reverse = TRUE))
+
+
+###1784: 
+# 1) Compute percent reduction
+# new: percent change = (1784 - ref) / ref * 100
+precip_pct <- (mean_precip_1784 - mean_precip_ref) / mean_precip_ref * 100
+
+r <- raster(t(precip_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1784)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in Precipitation: 1784 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+
+
+# 1) Compute percent reduction
+# new: percent change = (1815 - ref) / ref * 100
+precip_pct <- (mean_precip_1815 - mean_precip_ref) / mean_precip_ref * 100
+
+r <- raster(t(precip_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1815)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in Precipitation: 1815 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+
+
+
+# 1) Compute percent reduction
+# new: percent change = (1816 - ref) / ref * 100
+precip_pct <- (mean_precip_1816 - mean_precip_ref) / mean_precip_ref * 100
+
+r <- raster(t(precip_pct), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "reduction")  # Rename columns to match ggplot expectations
+
+# 5) set up bins & palette for % change including -10 and 10
+custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
+
+# we now have length(custom_bins)-1 = 12 intervals
+n_intervals <- length(custom_bins) - 1    # 12
+
+# build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
+library(RColorBrewer)
+base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
+custom_colors <- colorRampPalette(base_pal)(n_intervals)
+custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
+
+# 6) rebuild your labels
+lbls <- paste0(
+  custom_bins[-length(custom_bins)],   # from
+  "–",
+  custom_bins[-1]                      # to
+)
+
+r_df$cat <- cut(
+  r_df$reduction,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# 7) plot
+library(ggplot2)
+ggplot() +
+  geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
+  scale_fill_manual(name = "% change (ref → 1816)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
+                    labels = c("Ocean", lbls), breaks = c("Ocean", lbls)) +  # Label ocean
+  geom_sf(data = land, fill = NA, color = "black", size = 0.3) +
+  coord_sf(xlim = c(-180,180), ylim = c(-60,90), expand = FALSE) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size=12),
+    axis.title = element_text(size=14)
+  ) +
+  labs(
+    title = "Percent reduction in Precipitation: 1816 vs. Reference",
+    x     = "Longitude",
+    y     = "Latitude"
+  )+
+  guides(fill = guide_legend(title = "% change", reverse = TRUE))
+```
