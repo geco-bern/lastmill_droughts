@@ -21,7 +21,7 @@
 .Rproj.user/
 
 # produced figures
-figures/*.pdf
+figures/
 
 # produced data
 data/*.csv
