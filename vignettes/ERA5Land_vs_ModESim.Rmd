@@ -1292,6 +1292,7 @@ anom_CAU <- ggplot() +
   facet_wrap(~region, scales = "free_y")
 ```
 
+
 ```{r}
 ###put together in one plot and save
 #### combine plots in grid and save

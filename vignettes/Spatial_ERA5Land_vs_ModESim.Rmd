@@ -39,7 +39,6 @@ library(ggpattern)
 ```
 
 ## Comparison of ModE-Sim and ERA5-Land PCWD data
-
 ### Read in ERA5Land data
 
 Read in and select only the overlapping years (1950-2009)
