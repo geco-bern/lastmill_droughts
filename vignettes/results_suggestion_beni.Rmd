@@ -1,0 +1,110 @@
+---
+title: "Results suggestion"
+author: "Beni Stocker"
+date: "2025-08-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(here)
+library(slider)
+```
+
+
+## Read data
+
+Interpreting the objects into nice and tidy data frames. Select only for one region ('MED' here).
+```{r}
+df_era5 <- tibble(
+  pcwd = read_rds(here("data/regional_results_ERA5Land.rds"))$MED
+  ) |> 
+  # not sure this is correct. Better to take years forward as part of the workflow. 
+  mutate(year = 1970:2024)
+
+extract_ensemble_number <- function(char){
+  char |> 
+    str_remove("_tidy") |> 
+    str_remove("m0") |> 
+    as.integer()
+}
+
+df_modesim <- read_rds(here("data/regional_results_ModESim_bc.rds"))$MED |> 
+  as_tibble() |> 
+  # not sure this is correct. Better to take years forward as part of the workflow. 
+  mutate(year = 1420:2009)
+
+df_modesim_long <- df_modesim |> 
+  pivot_longer(cols = ends_with("_tidy"), names_to = "member", values_to = "pcwd", names_transform = extract_ensemble_number)
+```
+
+## Annual values
+
+Determine single maximum in reference
+```{r}
+max_modesim <- df_modesim_long |> 
+  filter(pcwd == max(pcwd))
+
+max_era5 <- df_era5 |> 
+  filter(pcwd == max(pcwd))
+
+level_recordshattering <- max_modesim$pcwd + 2 * sd(df_modesim_long$pcwd, na.rm = TRUE)
+```
+
+
+### Visualise
+
+```{r}
+ggplot() +
+  geom_line(aes(year, pcwd, group = member), alpha = 0.1, data = df_modesim_long) +
+  geom_line(aes(year, pcwd), color = "tomato", data = df_era5) +
+  geom_point(aes(year, pcwd), alpha = 0.5, size = 2, data = max_modesim) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5) +
+  geom_hline(yintercept = max_modesim$pcwd, linetype = "dotted", alpha = 0.3) +
+  geom_hline(yintercept = level_recordshattering, linetype = "dotted", alpha = 0.3) +
+  theme_classic()
+```
+
+## 30-year means
+
+```{r}
+df_modesim_30 <- df_modesim |> 
+  mutate(across(ends_with("_tidy"), ~slide_dbl(.x, mean, .before = 29, .complete = TRUE, .names = "roll30"))) |> 
+  pivot_longer(cols = ends_with("_tidy"), names_to = "member", values_to = "pcwd30", names_transform = extract_ensemble_number)
+
+df_era5_30 <- df_era5 |> 
+  mutate(across(pcwd, ~slide_dbl(.x, mean, .before = 29, .complete = TRUE, .names = "roll30"))) 
+```
+
+Determine single maximum in reference
+```{r}
+max_modesim_30 <- df_modesim_30 |> 
+  filter(pcwd30 == max(pcwd30, na.rm = TRUE))
+
+max_era5_30 <- df_era5_30 |> 
+  filter(pcwd == max(pcwd, na.rm = TRUE))
+
+level_recordshattering <- max_modesim_30$pcwd30[1] + 2 * sd(df_modesim_30$pcwd30, na.rm = TRUE)
+```
+
+### Visualise
+
+```{r}
+ggplot() +
+  geom_line(aes(year, pcwd30, group = member), alpha = 0.3, data = df_modesim_30) +
+  geom_line(aes(year, pcwd), color = "tomato", data = df_era5_30) +
+  geom_point(aes(year, pcwd30), alpha = 0.5, size = 2, data = max_modesim_30) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_30) +
+  geom_hline(yintercept = max_modesim_30$pcwd30, linetype = "dotted", alpha = 0.3) +
+  geom_hline(yintercept = level_recordshattering, linetype = "dotted", alpha = 0.3) +
+  theme_classic()
+```
+
+## Conclusion
+
+- The record annual maximum PCWD in ERA5 is not unprecedented (and not record-shattering).
+- The record 30-year mean of annual maximum PCWD in ERA5 is indeed unprecedented (but not record-shattering).
