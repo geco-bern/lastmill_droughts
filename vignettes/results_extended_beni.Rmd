@@ -35,6 +35,8 @@ Interpreting the objects into nice and tidy data frames.
 ```{r}
 list_era5 <- read_rds(here("data/regional_results_ERA5Land.rds"))
 
+nregions <- length(list_era5)
+
 make_df_era5 <- function(vec){
   tibble(
     year = 1970:2024,
@@ -160,8 +162,9 @@ n_greater <- tmp |>
   pull(n_greater)
 
 gg2 <- tmp |> 
-  ggplot(aes(x = pcwd_max0_left, xend = pcwd_max0_right, y = pcwd_max1, color = is_greater)) +
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = is_greater)) +
   geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(values = c("grey30", "tomato")) +
@@ -208,8 +211,9 @@ n_greater <- tmp |>
   pull(n_greater)
 
 gg3 <- tmp |> 
-  ggplot(aes(x = pcwd_max0_left, xend = pcwd_max0_right, y = pcwd_max1, color = is_greater)) +
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = is_greater)) +
   geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(values = c("grey30", "tomato")) +
@@ -256,8 +260,9 @@ n_greater <- tmp |>
   pull(n_greater)
 
 gg4 <- tmp |> 
-  ggplot(aes(x = pcwd_max0_left, xend = pcwd_max0_right, y = pcwd_max1, color = is_greater)) +
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = is_greater)) +
   geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(values = c("grey30", "tomato")) +
@@ -330,7 +335,7 @@ n_greater <- tmp |>
   summarise(n_greater = sum(is_greater)) |> 
   pull(n_greater)
 
-gg1 <- tmp |> 
+gg5 <- tmp |> 
   ggplot(aes(pcwd_max0, pcwd_max1, color = is_greater)) +
   geom_point(size = 0.75, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
@@ -346,7 +351,7 @@ gg1 <- tmp |>
     title = "Record 25-year mean PCWD"
   )
 
-gg1
+gg5
 ```
 
 ### ModE-Sim recent (1975-1999)
@@ -381,7 +386,7 @@ n_greater <- tmp |>
   summarise(n_greater = sum(is_greater)) |> 
   pull(n_greater)
 
-gg2 <- tmp |> 
+gg6 <- tmp |> 
   ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = is_greater)) +
   geom_segment(show.legend = FALSE, linewidth = 0.75) +
   geom_point(show.legend = FALSE, size = 0.75) +
@@ -398,7 +403,7 @@ gg2 <- tmp |>
     title = "   "
   )
 
-gg2
+gg6
 ```
 
 ### ModE-Sim historical (1850-1999)
@@ -433,7 +438,7 @@ n_greater <- tmp |>
   summarise(n_greater = sum(is_greater)) |> 
   pull(n_greater)
 
-gg3 <- tmp |> 
+gg7 <- tmp |> 
   ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = is_greater)) +
   geom_segment(show.legend = FALSE, linewidth = 0.75) +
   geom_point(show.legend = FALSE, size = 0.75) +
@@ -444,13 +449,13 @@ gg3 <- tmp |>
   scale_x_log10() +
   scale_y_log10() +
   labs(
-    x = "ModE-Sim 1975-1999 (mm)",
+    x = "ModE-Sim 1850-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
     subtitle = bquote(italic(N) == .(n_greater)),
     title = "   "
   )
 
-gg3
+gg7
 ```
 
 ### ModE-Sim multi-century (1420-1999)
@@ -485,7 +490,7 @@ n_greater <- tmp |>
   summarise(n_greater = sum(is_greater)) |> 
   pull(n_greater)
 
-gg4 <- tmp |> 
+gg8 <- tmp |> 
   ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = is_greater)) +
   geom_segment(show.legend = FALSE, linewidth = 0.75) +
   geom_point(show.legend = FALSE, size = 0.75) +
@@ -502,17 +507,93 @@ gg4 <- tmp |>
     title = "   "
   )
 
-gg4
+gg8
 ```
 
 ### Combined plot
 
 ```{r}
 cowplot::plot_grid(
-  gg1, gg2, gg3, gg4, 
+  gg5, gg6, gg7, gg8, 
   nrow = 1, 
   align = "v",
   labels = letters[1:4]
   )
 ggsave(here("fig/30yrmeans_records_references.pdf"), width = 15, height = 4)
+```
+
+## 30-year extremes
+
+Calculate rolling 30-year extremes of all data, separated by region (ModE-Sim also separated by ensemble member).
+```{r}
+# Function: fit Gumbel with extRemes and estimate T-year return level
+fit_gumbel_return <- function(x, T = 30) {
+  # Fit Gumbel (GEV with shape = 0)
+  fit <- extRemes::fevd(x, type = "Gumbel")
+  
+  # Estimate T-year return level
+  rl <- unname(c(return.level(fit, return.period = T)))
+
+  return(rl)
+}
+
+calc_30x <- function(df){
+  fit_gumbel_return(df$pcwd)
+}
+
+df_era5_30x <- df_era5 |> 
+  mutate(period = ifelse(year %in% 1975:1999, "pcwd_x30_ref0", ifelse(year %in% 2000:2024, "pcwd_x30_ref1", NA))) |> 
+  group_by(region, period) |> 
+  nest() |> 
+  drop_na(period) |> 
+  mutate(pcwd_30x = purrr::map_dbl(data, ~calc_30x(.))) |> 
+  pivot_wider(id_cols = -data, values_from = "pcwd_30x", names_from = "period")
+
+# this takes long to compute
+df_modesim_30x <- df_modesim |> 
+  group_by(region) |> 
+  nest() |> 
+  mutate(
+    data = map(data, ~ .x  |> 
+      arrange(year) |> 
+      mutate(
+        roll_mean = slide_dbl(
+          .x$pcwd,
+          fit_gumbel_return,
+          .before = 24 * nregions,     # 2 before = 3-point window (includes current)
+          .complete = TRUE  # require full window, so first 2 will be NA
+        )
+      )
+    )
+  )
+```
+
+### ERA5
+
+Plot.
+```{r}
+tmp <- df_era5_30x |> 
+  mutate(is_greater = pcwd_x30_ref0 < pcwd_x30_ref1)
+
+n_greater <- tmp |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg5 <- tmp |> 
+  ggplot(aes(pcwd_x30_ref0, pcwd_x30_ref1, color = is_greater)) +
+  geom_point(size = 0.75, show.legend = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ERA5 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "30-year extreme PCWD"
+  )
+
+gg5
 ```
