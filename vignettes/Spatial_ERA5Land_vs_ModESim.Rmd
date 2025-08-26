@@ -44,7 +44,7 @@ library(ggpattern)
 Read in and select only the overlapping years (1950-2009)
 ```{r}
 #lat lon and time info from netcdf files
-##read in data
+##read in data - stored on Ubelix server
 input_file_ERA5 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ERA5Land_1950-2024/04_result/PCWD_ANNMAX.nc" 
 
 nc_pwcd_ERA5 <- nc_open(input_file_ERA5)

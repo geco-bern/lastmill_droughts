@@ -7,15 +7,12 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-setwd("~/Bern/Master thesis/R/lastmill_droughts") #set working directory
-knitr::opts_knit$set(root.dir = "~/Bern/Master thesis/R/lastmill_droughts")
-
 ```
 
 ```{r libraries, message=FALSE, echo=FALSE}
+library(here)
 library(readr)
 library(dplyr)
-library(here)
 library(lubridate)
 library(patchwork)
 library(ggplot2)
@@ -48,8 +45,8 @@ library(ggpattern)
 ```{r}
 ### read in IPCC Region information:
 #Load reference regions and coastlines:
+load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
 
-load("data/Reference_regions/IPCC-WGI-reference-regions-v4_R.rda", verbose = TRUE)
 
 #simplify this object by converting it to a SpatialPolygons class object (i.e., only the polygons are retained and their attributes discarded):
 refregions <- as(IPCC_WGI_reference_regions_v4, "SpatialPolygons")
@@ -60,7 +57,6 @@ regions <- c("GIC", "NWN", "NEN", "WNA", "CNA", "ENA", "NCA", "SCA", "CAR", "NWS
              "SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG", "RAR", "WSB",
              "ESB", "RFE", "WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "NAU",
              "CAU", "EAU", "SAU", "NZ")
-# regions <- c("GIC")
 
 # Define continent assignments
 continent_mapping <- list(
@@ -73,14 +69,32 @@ continent_mapping <- list(
   "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
 )
 
+```
 
-regional_results_ERA5Land<- readRDS("data/regionalResults_ERA5Land.RData") #1950 - 2024
+### Load modern ERA5-Land reanalysis data
+
+```{r}
+
+regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land.RData")) #1950 - 2024
 ### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
 regional_results_ERA5Land <- lapply(regional_results_ERA5Land, function(x) x[21:75])
 
+```
+
+
+### Bias correct regional ModE-Sim data
+
+#### Apply Quantile Mapping to already regional average data in order to fit distribution better
+- fit quantile mapping for an overlap period
+- then apply to the rest of the dataset
+
+Apply bias correction for chosen overlap period (21:50) - excludes 60s with potential precipitation problem in ModE-Sim and somewhat allows for stationary climate
+
+```{r}
+#---------- Read in raw ModE-Sim regional aggregate data and merge epochs
 # ### read in ModE-Sim regional results
-# regional_results_1420 <- readRDS("~/cwd_global/data/regionalResults_1420_1.RData")
-# regional_results_1850 <- readRDS("~/cwd_global/data/regionalResults_1850_1.RData")
+# regional_results_1420 <- readRDS(here("data/regionalResults_1420_1.RData"))
+# regional_results_1850 <- readRDS(here("data/regionalResults_1850_1.RData"))
 # merged_results <- Map(rbind, regional_results_1420, regional_results_1850) # Stitch matrices together row-wise for each region
 # 
 # ### Remove m001_tidy for areas CAU, EAU, NAU, NZ, SAU, RFE, EAS, SEA
@@ -93,17 +107,9 @@ regional_results_ERA5Land <- lapply(regional_results_ERA5Land, function(x) x[21:
 # }
 # 
 
-```
+# saveRDS(regional_results_ERA5Land, file = here::here("data/regional_results_ERA5Land.rds"))
 
-### Bias correct regional ModE-Sim data
 
-#### Apply Quantile Mapping to already regional average data in order to fit distribution better
-- fit quantile mapping for an overlap period
-- then apply to the rest of the dataset
-
-Apply bias correction for chosen overlap period (21:50) - excludes 60s with potential precipitation problem in ModE-Sim and somewhat allows for stationary climate
-
-```{r}
 # #install.packages("qmap") # uncomment if you haven't installed it
 # library(qmap)
 # library(Metrics)
@@ -134,10 +140,9 @@ Apply bias correction for chosen overlap period (21:50) - excludes 60s with pote
 # }
 # 
 # ###save bias corrected ModE-Sim data: 
-# saveRDS(corrected_full, "~/cwd_global/data/regionalResults_ModESim_bc.RData")
+# saveRDS(corrected_full, file = here::here("data/regionalResults_ModESim_bc.RData"))
 
-corrected_full <- readRDS("data/regionalResults_ModESim_bc.RData")
-
+corrected_full <- readRDS(here("data/regionalResults_ModESim_bc.RData"))
 ```
 
 
@@ -147,23 +152,28 @@ Validation plots:
 - scatterplot where data should lie on 1:1 line if it represents well 
 
 ```{r}
-# Convert ModESim data to long format
-ModESim_long <- bind_rows(lapply(names(merged_results), function(region) {
-  data.frame(
-    Year = rep(1950:2009, times = 20),  # Repeat years for each ensemble member
-    Value = as.vector(merged_results[[region]][531:590,]),  # Flatten matrix
-    Region = region,
-    Source = "ModESim"
-  )
-}))
+# # Convert ModESim data to long format
+# ModESim_long <- bind_rows(lapply(names(merged_results), function(region) {
+#   data.frame(
+#     Year = rep(1950:2009, times = 20),  # Repeat years for each ensemble member
+#     Value = as.vector(merged_results[[region]][531:590,]),  # Flatten matrix
+#     Region = region,
+#     Source = "ModESim"
+#   )
+# }))
 
 # Convert ModESim data to long format
-ModESim_long_bc <- bind_rows(lapply(names(corrected_full), function(region) { #regional_results_ModESim_bc for mean_bias corrected global data
+ModESim_long_bc <- bind_rows(lapply(names(corrected_full), function(region) {
+  mat <- corrected_full[[region]]
+  n_members <- ncol(mat)       # number of ensemble members (could be 19 or 20)
+  n_years <- length(years)                # 550
+  sub <- mat[seq_len(n_years), , drop = FALSE]  # take first 550 rows
+  
   data.frame(
-    Year = rep(1950:2009, times = 20),  # Repeat years for each ensemble member
-    Value = as.vector(corrected_full[[region]][531:590,]),  # Flatten matrix
+    Year   = rep(1950:2009, times = n_members), # repeat years accordingly
+    Value   = as.vector(mat[531:590, ]),           # flatten matrix
     Region = region,
-    Source = "ModESim_bc"
+    Source = "ModESim"
   )
 }))
 
@@ -178,7 +188,7 @@ ERA5Land_long <- bind_rows(lapply(names(regional_results_ERA5Land), function(reg
 }))
 
 # Combine both datasets
-combined_data_raw <- bind_rows(ModESim_long, ERA5Land_long)
+#combined_data_raw <- bind_rows(ModESim_long, ERA5Land_long)
 combined_data_bc <- bind_rows(ModESim_long_bc, ERA5Land_long) #bias corrected ModE-Sim
 
 #### colours x-axis
@@ -204,13 +214,10 @@ continent_colors <- c(
 )
 
 # Extract unique regions from your data
-unique_regions <- unique(combined_data_raw$Region)
+unique_regions <- unique(combined_data_bc$Region)
 
 # Initialize a named character vector for storing formatted labels.
 region_color_labels <- setNames(rep(NA, length(unique_regions)), unique_regions)
-
-#install.packages("ggtext")  # if not already installed
-library(ggtext)             # must be called in your script
 
 
 # For each continent, assign the corresponding region labels that match
@@ -236,26 +243,26 @@ for (region in unique_regions) {
 # Inspect the mapping to confirm:
 #print(region_color_labels)
 
-# Plot the violin plot
-ggplot(combined_data_raw, aes(x = Region, y = Value, fill = Source)) +
-  geom_violin(scale = "width") +
-  theme_minimal() +
-  scale_fill_manual(
-    values = c( "ERA5Land" = "#087E8B", "ModESim" = "#FF5A5F"),
-    labels = c( "ERA5-Land", "ModE-Sim")  # Or customize as you like
-  ) +
-  scale_x_discrete(labels = region_color_labels) +  # Apply custom coloured labels
-  theme(axis.text.x = element_markdown(angle = 90, hjust = 1, size = 12),
-    legend.position = "none",
-    axis.text.y = element_text(size = 12), 
-    axis.title.x = element_text(size = 13),
-    axis.title.y = element_text(size = 13),
-    legend.title = element_text(face = "bold"),
-    legend.text = element_text(size=12),) +  # Rotate x-axis labels
-  labs(title = "ModE-Sim (RAW) vs ERA5-Land by Region (1950-2009)",
-       y = "PCWD Value [mm]",
-       x = "Region",
-       fill = "Dataset")
+# # Plot the violin plot
+# ggplot(combined_data_raw, aes(x = Region, y = Value, fill = Source)) +
+#   geom_violin(scale = "width") +
+#   theme_minimal() +
+#   scale_fill_manual(
+#     values = c( "ERA5Land" = "#087E8B", "ModESim" = "#FF5A5F"),
+#     labels = c( "ERA5-Land", "ModE-Sim")  # Or customize as you like
+#   ) +
+#   scale_x_discrete(labels = region_color_labels) +  # Apply custom coloured labels
+#   theme(axis.text.x = element_markdown(angle = 90, hjust = 1, size = 12),
+#     legend.position = "none",
+#     axis.text.y = element_text(size = 12), 
+#     axis.title.x = element_text(size = 13),
+#     axis.title.y = element_text(size = 13),
+#     legend.title = element_text(face = "bold"),
+#     legend.text = element_text(size=12),) +  # Rotate x-axis labels
+#   labs(title = "ModE-Sim (RAW) vs ERA5-Land by Region (1950-2009)",
+#        y = "PCWD Value [mm]",
+#        x = "Region",
+#        fill = "Dataset")
 
 
 # Plot the violin plot
@@ -263,8 +270,8 @@ ggplot(combined_data_bc, aes(x = Region, y = Value, fill = Source)) +
   geom_violin(scale = "width") +
   theme_minimal() +
   scale_fill_manual(
-    values = c( "ERA5Land" = "#087E8B", "ModESim_bc" = "#FF5A5F"),
-    labels = c( "ERA5-Land", "ModE-Sim")  # Or customize as you like
+    values = c( "ERA5Land" = "#087E8B", "ModESim" = "#FF5A5F"),
+    labels = c( "ERA5-Land", "ModE-Sim_bc")  # Or customize as you like
   ) +
   scale_x_discrete(labels = region_color_labels) +  # Apply custom coloured labels
   theme(axis.text.x = element_markdown(angle = 90, hjust = 1, size = 12),
@@ -282,631 +289,187 @@ ggplot(combined_data_bc, aes(x = Region, y = Value, fill = Source)) +
 ```
 
 
-```{r}
-library(ggExtra)
-library(MASS)  # For density estimation
+#### Quantitative analysis 
+How many 2000 - 2024 ERA5Land values lie outside the EM range of ModE-Sim (i.e. are unprecedented?)
+Check how many regions lie outside of 2SD when considering whole ensemble member range? 
 
-# Merge the datasets by Year and Region
-scatter_data <- inner_join(ModESim_long, ERA5Land_long, by = c("Year", "Region"), suffix = c("_ModESim", "_ERA5Land"))
-#bias corrected: 
-scatter_data_bc <- inner_join(ModESim_long_bc, ERA5Land_long, by = c("Year", "Region"), suffix = c("_ModESim_bc", "_ERA5Land"))
-
-# Compute 2D Kernel Density Estimation
-dens <- kde2d(scatter_data$Value_ERA5Land, scatter_data$Value_ModESim, n = 100)
-dens_bc <- kde2d(scatter_data_bc$Value_ERA5Land, scatter_data_bc$Value_ModESim_bc, n = 100)
-
-# Find the density values for each point in the scatter plot
-scatter_data$density <- dens$z[cbind(
-  findInterval(scatter_data$Value_ERA5Land, dens$x), 
-  findInterval(scatter_data$Value_ModESim, dens$y)
-)]
-
-# Find the density values for each point in the scatter plot
-scatter_data_bc$density <- dens_bc$z[cbind(
-  findInterval(scatter_data_bc$Value_ERA5Land, dens_bc$x), 
-  findInterval(scatter_data_bc$Value_ModESim, dens_bc$y)
-)]
-
-# Scatter plot with density-based coloring
-ggplot(scatter_data, aes(x = Value_ERA5Land, y = Value_ModESim, color = density)) +
-  geom_point(size = 1.5) +  # Regular points, colored by density
-  geom_abline(slope = 1, intercept = 0, color = "grey42") +
-  scale_color_viridis_c(option = "plasma") +  # Heatmap-like color scheme
-  geom_smooth(method = "lm", color = "red", se = FALSE, linewidth= 0.5) +  # Trend line
-  theme_minimal() +
-  labs(title = "ERA5Land vs. ModESim (1950-2009)",
-       x = expression(PCWD[ERA5Land]),
-       y = expression(PCWD[ModE-Sim]),
-       color = "Density") +
-  theme(legend.position = "right")
-
-# Scatter plot with density-based coloring
-ggplot(scatter_data_bc, aes(x = Value_ERA5Land, y = Value_ModESim_bc, color = density)) +
-  geom_point(size = 1.5) +  # Regular points, colored by density
-  geom_abline(slope = 1, intercept = 0, color = "grey42") +
-  scale_color_viridis_c(option = "plasma") +  # Heatmap-like color scheme
-  geom_smooth(method = "lm", color = "red", se = FALSE, linewidth= 0.5) +  # Trend line
-  theme_minimal() +
-  labs(title = "ERA5Land vs. ModESim_bc (QM) (1950-2009)",
-       x = expression(PCWD[ERA5Land]),
-       y = expression(PCWD[ModE-Sim]),
-       color = "Density") +
-  theme(legend.position = "right")
-```
-
-
-### Absolute values timeseries of bias corrected ModE-Sim and ERA5-Land
+Calculate how many modern PCWD values are truly unprecedented (max(ERA5) > max(ref))
+Calculate how many modern PCWD values are record shattering (max(ERA5) > (max(ref)+2sd*(ref))
 
 ```{r}
-### raw ModESim regional data - corrected_full = bias corrected 1850-2009
-abs_ModESim <- do.call(rbind,lapply(names(corrected_full), function(region) { #merged_results for raw
-  df <- as.data.frame(corrected_full[[region]][431:590,]) ## corrected_full for bc
-  df$time <- seq(1850,2009)
-  df$region <- region
-  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "PCWD")
-  return(df_long)
+#------------reference values ERA5 - 2000-2024
+#Convert ERA5Land data to long format 
+ERA5Land_modern <- bind_rows(lapply(names(regional_results_ERA5Land), function(region) {
+  data.frame(
+    Year = 2000:2024, #change to 2009 for overlap period
+    PCWD = regional_results_ERA5Land[[region]][31:55], #indexing year 2000-2024
+    Region = region,
+    Source = "ERA5Land"
+  )
 }))
 
-# Add a continent column
-abs_ModESim$continent <- NA  # Initialize continent column
-for (continent in names(continent_mapping)) {
-  abs_ModESim$continent[abs_ModESim$region %in% continent_mapping[[continent]]] <- continent
-}
 
-abs_ERA5 <- do.call(rbind,lapply(names(regional_results_ERA5Land), function(region) {
-  df <- as.data.frame(regional_results_ERA5Land[[region]])
-  df$time <- seq(1970,2024)
-  df$region <- region
-  df_long <- pivot_longer(df, cols = -c(time, region),  values_to = "PCWD")
-  return(df_long)
+#-----------reference values long context ModESim - 1420-1969
+# Convert ModESim data to long format
+ModESim_long <- bind_rows(lapply(names(corrected_full), function(region) {
+  mat <- corrected_full[[region]]
+  n_members <- ncol(mat)       # number of ensemble members (could be 19 or 20)
+  n_years <- length(years)                # 550
+  sub <- mat[seq_len(n_years), , drop = FALSE]  # take first 550 rows
+  
+  data.frame(
+    Year   = rep(1420:1969, times = n_members), # repeat years accordingly
+    PCWD   = as.vector(mat[1:550, ]),           # flatten matrix
+    Ensemble = rep(colnames(mat), each = n_years),
+    Region = region,
+    Source = "ModESim"
+  )
 }))
 
-# Add a continent column
-abs_ERA5$continent <- NA  # Initialize continent column
-for (continent in names(continent_mapping)) {
-  abs_ERA5$continent[abs_ERA5$region %in% continent_mapping[[continent]]] <- continent
-}
 
-############### plot for regions
-# Filter for selected continent
-selected_continent <- "Europe"
-mod_filtered <- abs_ModESim %>% filter(continent == selected_continent)
-era_filtered <- abs_ERA5 %>% filter(continent == selected_continent)
-
-# Plot rolling mean time series
-ggplot() +
-  # Plot individual ensemble members as fine grey lines
-  geom_line(data = mod_filtered, aes(x = time, y = PCWD, group = ensemble_member, 
-            color = factor("Ensemble Members")), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
-  # Plot mean z-score as a bold black line
-  geom_line(data = mod_filtered %>% group_by(time, region) %>% summarise(EM = mean(PCWD, na.rm = TRUE)),
-            aes(x = time, y = EM, color = factor("ModESim")), linewidth = 1) +
-  geom_line(data = era_filtered, aes(x = time, y = PCWD,
-            color = factor("ERA5")), linewidth = 1, show.legend = TRUE) +
-  labs(
-    x = "Year",
-    y = "PCWD [mm]",
-    title = paste("Absolute PCWD (QM-BC) for", selected_continent)
-  ) +
-  # Manual color scale for legend
-  scale_color_manual(
-    values = c("Ensemble Members" = "#7EA3CC","ModESim" = "#255C99",
-               "ERA5" = "#B3001B" ),
-    labels = c("Ensemble Members","PCWD (Mean) - ModESim", 
-               "PCWD - ERA5Land" )
-  ) +
-  # Customize the legend
-  guides(
-    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))  # Improve legend readability
-  ) +
-  theme_classic() +
-  theme(
-    legend.position = "top",
-    legend.title = element_text(face = "bold"),
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    strip.text = element_text(size = 10),
-    strip.background = element_rect(fill = "#F5B0CB"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
+#reference values short context ModESim - 1970-1999
+ModESim_short <- bind_rows(lapply(names(corrected_full), function(region) {
+  mat <- corrected_full[[region]]
+  n_members <- ncol(mat)       # number of ensemble members (could be 19 or 20)
+  n_years <- length(years)                # 550
+  sub <- mat[seq_len(n_years), , drop = FALSE]  # take first 550 rows
   
-  facet_wrap(~region, scales = "free_y")
+  data.frame(
+    Year   = rep(1970:1999, times = n_members), # repeat years accordingly
+    PCWD   = as.vector(mat[551:580, ]),           # flatten matrix
+    Ensemble = rep(colnames(mat), each = n_years),
+    Region = region,
+    Source = "ModESim"
+  )
+}))
+
+##------------------ Calculate whether PCWD is unprecedented
+#Get reference ranges (1420–1969) for each region
+ref_range_long <- ModESim_long %>%
+  group_by(Region) %>%
+  summarise(ref_max = max(PCWD, na.rm = TRUE),
+            ref_maxsd = max(PCWD, na.rm = TRUE) + 2 * sd(PCWD, na.rm = TRUE),
+            .groups = "drop")
+
+#Get reference ranges (1970–1999) for each region
+ref_range_short <- ModESim_short %>%
+  group_by(Region) %>%
+  summarise(ref_max = max(PCWD, na.rm = TRUE),
+            ref_maxsd = max(PCWD, na.rm = TRUE) + 2 * sd(PCWD, na.rm = TRUE),
+            .groups = "drop")
+
+# 2. Compare modern period (2000–2024) to reference range
+########Long reference
+modern_outside_long <- ERA5Land_modern %>%
+  left_join(ref_range_long, by = "Region") %>%
+  filter(PCWD > ref_max) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_outside_long)
+n_regions_outside_long <- nrow(modern_outside_long)
+print(paste("In ", n_regions_outside_long, "out of 44 regions, PCWD is unprecendent in the long reference"))
+
+##########Short reference
+modern_outside_short <- ERA5Land_modern %>%
+  left_join(ref_range_short, by = "Region") %>%
+  filter(PCWD > ref_max) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_outside_short)
+n_regions_outside_short <- nrow(modern_outside_short)
+print(paste("In ", n_regions_outside_short, "out of 44 regions, PCWD is unprecendent in the short reference"))
 
 
-# Filter for selected continent
-selected_continent <- "Asia"
-mod_filtered <- abs_ModESim %>% filter(continent == selected_continent)
-era_filtered <- abs_ERA5 %>% filter(continent == selected_continent)
 
-# Plot rolling mean time series
-ggplot() +
-  # Plot individual ensemble members as fine grey lines
-  geom_line(data = mod_filtered, aes(x = time, y = PCWD, group = ensemble_member, 
-            color = factor("Ensemble Members")), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
-  # Plot mean z-score as a bold black line
-  geom_line(data = mod_filtered %>% group_by(time, region) %>% summarise(EM = mean(PCWD, na.rm = TRUE)),
-            aes(x = time, y = EM, color = factor("ModESim")), linewidth = 1) +
-  geom_line(data = era_filtered, aes(x = time, y = PCWD,
-            color = factor("ERA5")), linewidth = 1, show.legend = TRUE) +
-  labs(
-    x = "Year",
-    y = "PCWD [mm]",
-    title = paste("Absolute PCWD (QM-BC) for", selected_continent)
-  ) +
-  # Manual color scale for legend
-  scale_color_manual(
-    values = c("Ensemble Members" = "#7EA3CC","ModESim" = "#255C99", "ERA5" = "#B3001B" ),
-    labels = c("Ensemble Members","PCWD (Mean) - ModESim", "PCWD - ERA5Land" )
-  ) +
-  # Customize the legend
-  guides(
-    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))  # Improve legend readability
-  ) +
-  theme_classic() +
-  theme(
-    legend.position = "top",
-    legend.title = element_text(face = "bold"),
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    strip.text = element_text(size = 10),
-    strip.background = element_rect(fill = "#E5973B"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
-  
-  facet_wrap(~region, scales = "free_y")
+##------------------ Calculate whether PCWD is "record-shattering"
+# 2. Compare modern period (2000–2024) to reference range
+########Long reference
+modern_shattering_long <- ERA5Land_modern %>%
+  left_join(ref_range_long, by = "Region") %>%
+  filter(PCWD > ref_maxsd) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_shattering_long)
+n_regions_shattering_long <- nrow(modern_shattering_long)
+print(paste("In ", n_regions_shattering_long, "out of 44 regions, PCWD is record-shattering in the long reference"))
+
+##########Short reference
+modern_shattering_short <- ERA5Land_modern %>%
+  left_join(ref_range_short, by = "Region") %>%
+  filter(PCWD > ref_maxsd) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_shattering_short)
+n_regions_shattering_short <- nrow(modern_shattering_short)
+print(paste("In ", n_regions_shattering_short, "out of 44 regions, PCWD is record-shattering in the short reference"))
 
 
-# Filter for selected continent
-selected_continent <- "Australia"
-mod_filtered <- abs_ModESim %>% filter(continent == selected_continent)
-era_filtered <- abs_ERA5 %>% filter(continent == selected_continent)
 
-ggplot() +
-  # Plot individual ensemble members as fine grey lines
-  geom_line(data = mod_filtered, aes(x = time, y = PCWD, group = ensemble_member, 
-            color = factor("Ensemble Members")), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
-  # Plot mean z-score as a bold black line
-  geom_line(data = mod_filtered %>% group_by(time, region) %>% summarise(EM = mean(PCWD, na.rm = TRUE)),
-            aes(x = time, y = EM, color = factor("ModESim")), linewidth = 1) +
-  geom_line(data = era_filtered, aes(x = time, y = PCWD,
-            color = factor("ERA5")), linewidth = 1, show.legend = TRUE) +
-  labs(
-    x = "Year",
-    y = "PCWD [mm]",
-    title = paste("Absolute PCWD (QM-BC) for", selected_continent)
-  ) +
-  # Manual color scale for legend
-  scale_color_manual(
-    values = c("Ensemble Members" = "#7EA3CC","ModESim" = "#255C99",
-               "ERA5" = "#B3001B" ),
-    labels = c("Ensemble Members","PCWD (Mean) - ModESim", 
-               "PCWD - ERA5Land" )
-  ) +
-  # Customize the legend
-  guides(
-    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))  # Improve legend readability
-  ) +
-  theme_classic() +
-  theme(
-    legend.position = "top",
-    legend.title = element_text(face = "bold"),
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    strip.text = element_text(size = 10, color = "white"),
-    strip.background = element_rect(fill = "#3C3980"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
-  
-  facet_wrap(~region, scales = "free_y")
-
-# Filter for selected continent
-selected_continent <- "Africa"
-mod_filtered <- abs_ModESim %>% filter(continent == selected_continent)
-era_filtered <- abs_ERA5 %>% filter(continent == selected_continent)
-
-ggplot() +
-  # Plot individual ensemble members as fine grey lines
-  geom_line(data = mod_filtered, aes(x = time, y = PCWD, group = ensemble_member, 
-            color = factor("Ensemble Members")), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
-  # Plot mean z-score as a bold black line
-  geom_line(data = mod_filtered %>% group_by(time, region) %>% summarise(EM = mean(PCWD, na.rm = TRUE)),
-            aes(x = time, y = EM, color = factor("ModESim")), linewidth = 1) +
-  geom_line(data = era_filtered, aes(x = time, y = PCWD,
-            color = factor("ERA5")), linewidth = 1, show.legend = TRUE) +
-  labs(
-    x = "Year",
-    y = "PCWD [mm]",
-    title = paste("Absolute PCWD (QM-BC) for", selected_continent)
-  ) +
-  # Manual color scale for legend
-  scale_color_manual(
-    values = c("Ensemble Members" = "#7EA3CC","ModESim" = "#255C99",
-               "ERA5" = "#B3001B" ),
-    labels = c("Ensemble Members","PCWD (Mean) - ModESim", 
-               "PCWD - ERA5Land" )
-  ) +
-  # Customize the legend
-  guides(
-    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))  # Improve legend readability
-  ) +
-  theme_classic() +
-  theme(
-    legend.position = "top",
-    legend.title = element_text(face = "bold"),
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    strip.text = element_text(size = 10),
-    strip.background = element_rect(fill = "#91C7B1"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
-  
-  facet_wrap(~region, scales = "free_y")
-
-# Filter for selected continent
-selected_continent <- "North America"
-mod_filtered <- abs_ModESim %>% filter(continent == selected_continent)
-era_filtered <- abs_ERA5 %>% filter(continent == selected_continent)
-
-ggplot() +
-  # Plot individual ensemble members as fine grey lines
-  geom_line(data = mod_filtered, aes(x = time, y = PCWD, group = ensemble_member, 
-            color = factor("Ensemble Members")), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
-  # Plot mean z-score as a bold black line
-  geom_line(data = mod_filtered %>% group_by(time, region) %>% summarise(EM = mean(PCWD, na.rm = TRUE)),
-            aes(x = time, y = EM, color = factor("ModESim")), linewidth = 1) +
-  geom_line(data = era_filtered, aes(x = time, y = PCWD,
-            color = factor("ERA5")), linewidth = 1, show.legend = TRUE) +
-  labs(
-    x = "Year",
-    y = "PCWD [mm]",
-    title = paste("Absolute PCWD (QM-BC) for", selected_continent)
-  ) +
-  # Manual color scale for legend
-  scale_color_manual(
-    values = c("Ensemble Members" = "#7EA3CC","ModESim" = "#255C99",
-               "ERA5" = "#B3001B" ),
-    labels = c("Ensemble Members","PCWD (Mean) - ModESim", 
-               "PCWD - ERA5Land" )
-  ) +
-  theme_classic() +
-  theme(
-    legend.position = "top",
-    legend.title = element_text(face = "bold"),
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    strip.text = element_text(size = 10, color = "white"),
-    strip.background = element_rect(fill = "#236A3F"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
-  
-  facet_wrap(~region, scales = "free_y")
-
-# Filter for selected continent
-selected_continent <- "South America"
-mod_filtered <- abs_ModESim %>% filter(continent == selected_continent)
-era_filtered <- abs_ERA5 %>% filter(continent == selected_continent)
-
-ggplot() +
-  # Plot individual ensemble members as fine grey lines
-  geom_line(data = mod_filtered, aes(x = time, y = PCWD, group = ensemble_member, 
-            color = factor("Ensemble Members")), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
-  # Plot mean z-score as a bold black line
-  geom_line(data = mod_filtered %>% group_by(time, region) %>% summarise(EM = mean(PCWD, na.rm = TRUE)),
-            aes(x = time, y = EM, color = factor("ModESim")), linewidth = 1) +
-  geom_line(data = era_filtered, aes(x = time, y = PCWD,
-            color = factor("ERA5")), linewidth = 1, show.legend = TRUE) +
-  labs(
-    x = "Year",
-    y = "PCWD [mm]",
-    title = paste("Absolute PCWD (QM-BC) for", selected_continent)
-  ) +
-  # Manual color scale for legend
-  scale_color_manual(
-    values = c("Ensemble Members" = "#7EA3CC","ModESim" = "#255C99",
-               "ERA5" = "#B3001B" ),
-    labels = c("Ensemble Members","PCWD (Mean) - ModESim", 
-               "PCWD - ERA5Land" )
-  ) +
-  # Customize the legend
-  guides(
-    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))  # Improve legend readability
-  ) +
-  theme_classic() +
-  theme(
-    legend.position = "top",
-    legend.title = element_text(face = "bold"),
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    strip.text = element_text(size = 10),
-    strip.background = element_rect(fill = "#E3D081"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
-  
-  facet_wrap(~region, scales = "free_y")
-
-# Filter for selected continent
-selected_continent <- "Central America"
-mod_filtered <- abs_ModESim %>% filter(continent == selected_continent)
-era_filtered <- abs_ERA5 %>% filter(continent == selected_continent)
-
-ggplot() +
-  # Plot individual ensemble members as fine grey lines
-  geom_line(data = mod_filtered, aes(x = time, y = PCWD, group = ensemble_member, 
-            color = factor("Ensemble Members")), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
-  # Plot mean z-score as a bold black line
-  geom_line(data = mod_filtered %>% group_by(time, region) %>% summarise(EM = mean(PCWD, na.rm = TRUE)),
-            aes(x = time, y = EM, color = factor("ModESim")), linewidth = 1) +
-  geom_line(data = era_filtered, aes(x = time, y = PCWD,
-            color = factor("ERA5")), linewidth = 1, show.legend = TRUE) +
-  labs(
-    x = "Year",
-    y = "PCWD [mm]",
-    title = paste("Absolute PCWD (QM-BC) for", selected_continent)
-  ) +
-  # Manual color scale for legend
-  scale_color_manual(
-    values = c("Ensemble Members" = "#7EA3CC","ModESim" = "#255C99",
-               "ERA5" = "#B3001B" ),
-    labels = c("Ensemble Members","PCWD (Mean) - ModESim", 
-               "PCWD - ERA5Land" )
-  ) +
-  # Customize the legend
-  guides(
-    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))  # Improve legend readability
-  ) +
-  theme_classic() +
-  theme(
-    legend.position = "top",
-    legend.title = element_text(face = "bold"),
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    strip.text = element_text(size = 10),
-    strip.background = element_rect(fill = "#B33951"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
-  
-  facet_wrap(~region, scales = "free_y")
 ```
-
-
-## Regional Extreme Value analysis on bias corrected data
-
-Select entire ERA5 data available to calculate 2 and 5 year events for specific regions: 
+Compute the same for 30-year rolling means - general shift in PCWD distribution? 
 
 ```{r}
-# ##Read in data: 
-# ##ERA5Land regional aggregates:
-regional_results_ERA5Land <- readRDS("~/cwd_global/data/regionalResults_ERA5Land.RData")
-#exclude 1950s-1970s due to potential precipitation problems
-regional_results_ERA5Land <- lapply(regional_results_ERA5Land, function(x) x[21:75])
-###########------------------------- TODO
+Modesim_30_long <- ModESim_long %>%
+  group_by(Region, Ensemble) %>%
+  arrange(Year, .by_group = TRUE) %>%
+  mutate(PCWD30 = slide_dbl(PCWD, mean, .before = 29, .complete = TRUE)) %>%
+  ungroup()
 
-WCE_ERA5 <- regional_results_ERA5Land[["WCE"]]
-
-#ModESim data
-WCE_MODE <- corrected_full[["WCE"]]
-
-#attach time dimension
-time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
-time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2024))
+Modesim_30_short <- ModESim_short %>%
+  group_by(Region, Ensemble) %>%
+  arrange(Year, .by_group = TRUE) %>%
+  mutate(PCWD30 = slide_dbl(PCWD, mean, .before = 29, .complete = TRUE)) %>%
+  ungroup()
 
 
-# Convert ModE dataset to long format
-WCE_MODE_long <- WCE_MODE %>%
-  as.data.frame() %>%
-  mutate(time = time_info_mode) %>%
-  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
-
-# Compute means
-WCE_MODE_mean <- WCE_MODE_long %>%
-  group_by(time) %>%
-  summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
-
-# Convert ERA5 dataset into long format
-WCE_ERA5_df <- data.frame(time = time_info_era, PCWD = WCE_ERA5)
+ERA5Land_means <- ERA5Land_modern %>%
+  group_by(Region) %>%
+  summarise(PCWD_mean = mean(PCWD, na.rm = TRUE), .groups = "drop")
 
 
-#### ---------------------- Copy for MED ---------------------------------
-MED_ERA5 <- regional_results_ERA5Land[["MED"]]
+#----------------Calculate whether ERA5Land means are above reference running means
+#Get reference ranges (1420–1969) for each region
+ref_range_long30 <- Modesim_30_long %>%
+  group_by(Region) %>%
+  summarise(ref_max = max(PCWD30, na.rm = TRUE),
+            .groups = "drop")
 
-#ModESim data
-MED_MODE <- corrected_full[["MED"]]
+#Get reference ranges (1970–1999) for each region
+ref_range_short30 <- Modesim_30_short %>%
+  group_by(Region) %>%
+  summarise(ref_max = max(PCWD30, na.rm = TRUE),
+            .groups = "drop")
 
-#attach time dimension
-time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
-time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2024))
+# 2. Compare modern period (2000–2024) to reference range
+########Long reference
+modern_outside_long30 <- ERA5Land_means %>%
+  left_join(ref_range_long30, by = "Region") %>%
+  filter(PCWD_mean > ref_max) %>%
+  distinct(Region)
 
+# 3. Count how many regions
+print(modern_outside_long30)
+n_regions_outside_long30 <- nrow(modern_outside_long30)
+print(paste("In ", n_regions_outside_long30, "out of 44 regions, mean PCWD is unprecendent in the long reference"))
 
-# Convert ModE dataset to long format
-MED_MODE_long <- MED_MODE %>%
-  as.data.frame() %>%
-  mutate(time = time_info_mode) %>%
-  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
+##########Short reference
+modern_outside_short30 <- ERA5Land_means %>%
+  left_join(ref_range_short30, by = "Region") %>%
+  filter(PCWD_mean > ref_max) %>%
+  distinct(Region)
 
-# Compute means
-MED_MODE_mean <- MED_MODE_long %>%
-  group_by(time) %>%
-  summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
-
-# Convert ERA5 dataset into long format
-MED_ERA5_df <- data.frame(time = time_info_era, PCWD = MED_ERA5)
-
-##WNA------------------------------
-WNA_ERA5 <- regional_results_ERA5Land[["WNA"]]
-
-#ModESim data
-WNA_MODE <- corrected_full[["WNA"]]
-
-#attach time dimension
-time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
-time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2024))
-
-
-# Convert ModE dataset to long format
-WNA_MODE_long <- WNA_MODE %>%
-  as.data.frame() %>%
-  mutate(time = time_info_mode) %>%
-  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
-
-# Compute means
-WNA_MODE_mean <- WNA_MODE_long %>%
-  group_by(time) %>%
-  summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
-
-# Convert ERA5 dataset into long format
-WNA_ERA5_df <- data.frame(time = time_info_era, PCWD = WNA_ERA5)
-
-##ARP -----------------------------------------
-ARP_ERA5 <- regional_results_ERA5Land[["ARP"]]
-
-#ModESim data
-ARP_MODE <- corrected_full[["ARP"]]
-
-#attach time dimension
-time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
-time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2024))
-
-
-# Convert ModE dataset to long format
-ARP_MODE_long <- ARP_MODE %>%
-  as.data.frame() %>%
-  mutate(time = time_info_mode) %>%
-  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
-
-# Compute means
-ARP_MODE_mean <- ARP_MODE_long %>%
-  group_by(time) %>%
-  summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
-
-# Convert ERA5 dataset into long format
-ARP_ERA5_df <- data.frame(time = time_info_era, PCWD = ARP_ERA5)
-
-
-##CAU-----------------------------------
-CAU_ERA5 <- regional_results_ERA5Land[["CAU"]]
-
-#ModESim data
-CAU_MODE <- corrected_full[["CAU"]]
-
-#attach time dimension
-time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
-time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2024))
-
-
-# Convert ModE dataset to long format
-CAU_MODE_long <- CAU_MODE %>%
-  as.data.frame() %>%
-  mutate(time = time_info_mode) %>%
-  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
-
-# Compute means
-CAU_MODE_mean <- CAU_MODE_long %>%
-  group_by(time) %>%
-  summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
-
-# Convert ERA5 dataset into long format
-CAU_ERA5_df <- data.frame(time = time_info_era, PCWD = CAU_ERA5)
+# 3. Count how many regions
+print(modern_outside_short30)
+n_regions_outside_short30 <- nrow(modern_outside_short30)
+print(paste("In ", n_regions_outside_short30, "out of 44 regions, mean PCWD is unprecendent in the short reference"))
 
 ```
 
-plot raw data all together: 
-```{r}
-# # Plot
-# ggplot() +
-#   geom_line(data = WCE_MODE_long, aes(x = time, y = PCWD, group = ensemble, color = factor("EMs_ModE")), linewidth=0.3,alpha = 0.3, show.legend = TRUE) +
-#   geom_line(data = WCE_MODE_mean, aes(x = time, y = PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
-#   geom_line(data = WCE_ERA5_df, aes(x = time, y = PCWD, color = factor("ERA5")), linewidth = 0.8) +
-#     # Manual color scale for legend
-#   scale_color_manual(
-#     values = c("EMs_ModE" = "#7EA3CC","Mean_ModE" = "#255C99", "ERA5" = "#B3001B" ),
-#     labels = c("EMs - ModESim","Mean - ModESim", "ERA5Land" )
-#   ) +
-#   labs(title = "Annmax PCWD Time Series for WCE",
-#        x = "Year",
-#        y = "PCWD [mm]",
-#        color = "Dataset") +
-#   theme_minimal()+
-#   theme(legend.position = "bottom")
-
-### ------------------- MED ---------------------------------
-# Plot
-ggplot() +
-  geom_line(data = MED_MODE_long, aes(x = time, y = PCWD, group = ensemble, color = factor("EMs_ModE")), linewidth=0.3,alpha = 0.3, show.legend = TRUE) +
-  geom_line(data = MED_MODE_mean, aes(x = time, y = PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
-  geom_line(data = MED_ERA5_df, aes(x = time, y = PCWD, color = factor("ERA5")), linewidth = 0.8) +
-    # Manual color scale for legend
-  scale_color_manual(
-    values = c("EMs_ModE" = "#7EA3CC","Mean_ModE" = "#255C99", "ERA5" = "#B3001B" ),
-    labels = c("EMs - ModE-Sim*","Mean - ModE-Sim*", "ERA5-Land" )
-  ) +
-  labs(title = "Annmax PCWD Time Series for MED",
-       x = "Year",
-       y = "PCWD [mm]",
-       color = "Dataset") +
-  theme_minimal()+
-  theme(legend.position = "right",
-         legend.title = element_text(face = "bold"))
-
-# ggsave(
-#   filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_legend.pdf",
-#   device   = cairo_pdf,    # better text rendering
-#   width    = 12,           # in inches
-#   height   = 6,            # in inches
-#   units    = "in",
-#   dpi      = 300,          # for raster elements (if any)
-#   bg       = "white"       # white background
-# )
-
-
-### ------------------- WNA ---------------------------------
-# Plot
-ggplot() +
-  geom_line(data = WNA_MODE_long, aes(x = time, y = PCWD, group = ensemble, color = factor("EMs_ModE")), linewidth=0.3,alpha = 0.3, show.legend = TRUE) +
-  geom_line(data = WNA_MODE_mean, aes(x = time, y = PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
-  geom_line(data = WNA_ERA5_df, aes(x = time, y = PCWD, color = factor("ERA5")), linewidth = 0.8) +
-    # Manual color scale for legend
-  scale_color_manual(
-    values = c("EMs_ModE" = "#7EA3CC","Mean_ModE" = "#255C99", "ERA5" = "#B3001B" ),
-    labels = c("EMs - ModE-Sim*","Mean - ModE-Sim*", "ERA5-Land" )
-  ) +
-  labs(title = "Annmax PCWD Time Series for WNA",
-       x = "Year",
-       y = "PCWD [mm]",
-       color = "Dataset") +
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-
-### ------------------- ARP ---------------------------------
-# Plot
-ggplot() +
-  geom_line(data = ARP_MODE_long, aes(x = time, y = PCWD, group = ensemble, color = factor("EMs_ModE")), linewidth=0.3,alpha = 0.3, show.legend = TRUE) +
-  geom_line(data = ARP_MODE_mean, aes(x = time, y = PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
-  geom_line(data = ARP_ERA5_df, aes(x = time, y = PCWD, color = factor("ERA5")), linewidth = 0.8) +
-    # Manual color scale for legend
-  scale_color_manual(
-    values = c("EMs_ModE" = "#7EA3CC","Mean_ModE" = "#255C99", "ERA5" = "#B3001B" ),
-    labels = c("EMs - ModE-Sim*","Mean - ModE-Sim*", "ERA5-Land" )
-  ) +
-  labs(title = "Annmax PCWD Time Series for ARP",
-       x = "Year",
-       y = "PCWD [mm]",
-       color = "Dataset") +
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-
-### ------------------- CAU ---------------------------------
-# Plot
-ggplot() +
-  geom_line(data = CAU_MODE_long, aes(x = time, y = PCWD, group = ensemble, color = factor("EMs_ModE")), linewidth=0.3,alpha = 0.3, show.legend = TRUE) +
-  geom_line(data = CAU_MODE_mean, aes(x = time, y = PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
-  geom_line(data = CAU_ERA5_df, aes(x = time, y = PCWD, color = factor("ERA5")), linewidth = 0.8) +
-    # Manual color scale for legend
-  scale_color_manual(
-    values = c("EMs_ModE" = "#7EA3CC","Mean_ModE" = "#255C99", "ERA5" = "#B3001B" ),
-    labels = c("EMs - ModE-Sim*","Mean - ModE-Sim*", "ERA5-Land" )
-  ) +
-  labs(title = "Annmax PCWD Time Series for CAU",
-       x = "Year",
-       y = "PCWD [mm]",
-       color = "Dataset") +
-  theme_minimal()+
-  theme(legend.position = "bottom")
-```
+### Absolute values timeseries of bias corrected ModE-Sim and ERA5-Land - visualisation
 
 Include rolling 30-year anomalies as thin black line with higlighted events
 
@@ -943,7 +506,10 @@ rolling_means_long <-  do.call(rbind, lapply(names(rolling_means), function(regi
   df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
   return(df_long)
 }))
+
+
 ```
+
 
 Calculate 600 year rolling anomalies from bias corrected ModE-Sim data with 1420-1450 as reference period
 ```{r}
@@ -1012,7 +578,8 @@ for (continent in names(continent_mapping)) {
 
 ```
 
-Anomaly timeseries plot with bias corrected data: 
+
+Anomaly timeseries plot with bias corrected data for selected regions: 
 
 ```{r}
 ####-----------------------------------------------------------------------
@@ -1292,95 +859,36 @@ anom_CAU <- ggplot() +
   facet_wrap(~region, scales = "free_y")
 ```
 
+Test - ModESim MED annmax PCWD distribution as context for ERA5Land extremes
 
 ```{r}
-###put together in one plot and save
-#### combine plots in grid and save
-anom_MED2 <- anom_MED + theme(plot.margin = margin(t = 10, r = 10, b = 5, l = 5))
-anom_WNA2 <- anom_WNA + theme(plot.margin = margin(t = 10, r = 10, b = 5, l = 5))
-anom_ARP2 <- anom_ARP + theme(plot.margin = margin(t = 0, r = 10, b = 5, l = 5))
-anom_CAU2 <- anom_CAU + theme(plot.margin = margin(t = 0, r = 10, b = 5, l = 5))
+## select MED region data
+MED_ERA5 <- regional_results_ERA5Land[["MED"]]
+
+#ModESim data
+MED_MODE <- corrected_full[["MED"]]
+
+#attach time dimension
+time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
+time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2024))
 
 
-combined_anom <- plot_grid(
-  anom_MED2, anom_WNA2,
-  anom_ARP2, anom_CAU2,
-  ncol = 2,
-  nrow = 2,
-  rel_widths = c(1, 1),
-  align = "h",
-  axis = "tblr",
-  labels = c(
-    "a)",  "b) ", "c)", "d)"
-  ),
-  label_size = 15,
-  label_x = 0.05,
-  hjust = 0,
-  label_y = 0.97,
-  vjust = 1
-)
+# Convert ModE dataset to long format
+MED_MODE_long <- MED_MODE %>%
+  as.data.frame() %>%
+  mutate(time = time_info_mode) %>%
+  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
 
-print(combined_anom)
+# Compute means
+MED_MODE_mean <- MED_MODE_long %>%
+  group_by(time) %>%
+  summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
 
-ggsave(
-  filename = "~/cwd_global/manuscript/anomalies.pdf",
-  plot     = combined_anom,
-  device   = cairo_pdf,    # better text rendering
-  width    = 10,           # in inches
-  height   = 6.5,            # in inches
-  units    = "in",
-  dpi      = 300,          # for raster elements (if any)
-  bg       = "white"       # white background
-)
+# Convert ERA5 dataset into long format
+MED_ERA5_df <- data.frame(time = time_info_era, PCWD = MED_ERA5)
 
-# ggsave(
-#   filename = "~/cwd_global/manuscript/anomalies_legend.pdf",
-#   plot     = anom_CAU,
-#   device   = cairo_pdf,    # better text rendering
-#   width    = 10,           # in inches
-#   height   = 6.5,            # in inches
-#   units    = "in",
-#   dpi      = 300,          # for raster elements (if any)
-#   bg       = "white"       # white background
-# )
+## Calculation return period values 
 
-```
-
-
-
-### Assessing the change in frequency of an ERA5 5-year drought events (Moderate drought)
-
-```{r functions for RP calc}
-# From https://geco-bern.github.io/cwd/articles/cwd_example.html: 
-# calculate return period as a function of the CWD extreme. Using the two 
-# coefficients of the fitted distribution as arguments
-calc_return_period <- function(x, loc, scale){
-  1 / (1 - exp(-exp(-(x-loc)/scale)))
-}
-
-extract_loc <- function(mod){
-  loc <- mod$results$par[ "location" ]
-  if (!is.null(loc)){
-    return(loc)
-  } else {
-    return(NA)
-  }
-}
-
-extract_scale <- function(mod){
-  scale <- mod$results$par[ "scale" ]
-  if (!is.null(scale)){
-    return(scale)
-  } else {
-    return(NA)
-  }
-}
-```
-
-
-ModESim MED annmax PCWD distribution as context for ERA5Land extremes
-
-```{r}
 baseline <- MED_ERA5[1:30] ##1970-1999
 fit_ref <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
 MED_era_ref_5yr <- round(as.numeric(extRemes::return.level(fit_ref, return.period = 5)))
@@ -1465,10 +973,10 @@ ggplot() +
     linewidth    = 0.6,
     show.legend = TRUE
   ) +
-  geom_vline(aes(xintercept = ModESim_full_5yr, color = factor("ModESim_full")), linetype = "dashed", linewidth=0.9) +
-  geom_vline(aes(xintercept = ModESim_ref_5yr, color = factor("ModESim_ref")), linetype = "dashed", linewidth=0.9) +
-  geom_vline(aes(xintercept = era_ref_5yr, color = factor("ERA_ref")), linetype = "dashed", linewidth=0.9) +
-  geom_vline(aes(xintercept = era_mod_5yr, color = factor("ERA_mod")), linetype = "dashed", linewidth=0.9) +
+  geom_vline(aes(xintercept = MED_ModESim_full_5yr, color = factor("ModESim_full")), linetype = "dashed", linewidth=0.9) +
+  geom_vline(aes(xintercept = MED_ModESim_ref_5yr, color = factor("ModESim_ref")), linetype = "dashed", linewidth=0.9) +
+  geom_vline(aes(xintercept = MED_era_ref_5yr, color = factor("ERA_ref")), linetype = "dashed", linewidth=0.9) +
+  geom_vline(aes(xintercept = MED_era_mod_5yr, color = factor("ERA_mod")), linetype = "dashed", linewidth=0.9) +
     labs(
     x = "PCWD [mm]",
     y = "Density",
@@ -1496,18 +1004,17 @@ ggplot() +
   )
 
 
-ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_legend.pdf",
-  device   = cairo_pdf,    # better text rendering
-  width    = 12,           # in inches
-  height   = 6,            # in inches
-  units    = "in",
-  dpi      = 300,          # for raster elements (if any)
-  bg       = "white"       # white background
-)
+# ggsave(
+#   filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_legend.pdf"),
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 12,           # in inches
+#   height   = 6,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
 
 ```
-
 
 
 Function that does the plotting for all regions: 
@@ -1763,7 +1270,7 @@ plot_CAU <- plot_region_PCWD("CAU")
 # ##### save legends
 # p_ts
 # ggsave(
-#   filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_legend.pdf",
+#   filename = here::here("manuscript/Annmax_PCWD_Timeseries_legend.pdf"),
 #   plot     = p_ts,
 #   device   = cairo_pdf,    # better text rendering
 #   width    = 10,           # in inches
@@ -1775,7 +1282,7 @@ plot_CAU <- plot_region_PCWD("CAU")
 # 
 # p_den
 # ggsave(
-#   filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_legend.pdf",
+#   filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_legend.pdf"),
 #   plot     = p_den,
 #   device   = cairo_pdf,    # better text rendering
 #   width    = 10,           # in inches
@@ -1787,7 +1294,7 @@ plot_CAU <- plot_region_PCWD("CAU")
 
 ```
 
-Combine multiple panels into one: 
+Combine multiple panels into one and save: 
 
 ```{r}
 ##for Fig. 1 in paper: 
@@ -1815,7 +1322,7 @@ combined2all <- plot_grid(
 print(combined2all)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_all_Fig.pdf",
+  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Fig.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1860,7 +1367,7 @@ combined2all <- plot_grid(
 print(combined2all)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_all_Europe.pdf",
+  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Europe.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1904,7 +1411,7 @@ combined2all <- plot_grid(
 print(combined2all)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_all_NorthAmerica.pdf",
+  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_NorthAmerica.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1954,7 +1461,7 @@ combined2all <- plot_grid(
 print(combined2all)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_all_Africa.pdf",
+  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Africa.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1997,7 +1504,7 @@ combined2all <- plot_grid(
 print(combined2all)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_all_Asia1.pdf",
+  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Asia1.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -2041,7 +1548,7 @@ combined2all <- plot_grid(
 print(combined2all)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_all_Asia2.pdf",
+  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Asia2.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -2078,7 +1585,7 @@ combined2all <- plot_grid(
 print(combined2all)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_all_CentralAmerica.pdf",
+  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_CentralAmerica.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -2125,7 +1632,7 @@ combined2all <- plot_grid(
 print(combined2all)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_all_SouthAmerica.pdf",
+  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_SouthAmerica.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -2168,7 +1675,7 @@ combined2all <- plot_grid(
 print(combined2all)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Annmax_PCWD_Timeseries_Density_all_Australia.pdf",
+  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Australia.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -2180,6 +1687,34 @@ ggsave(
 
 ```
 
+## Assessing the change in frequency of an ERA5 5-year drought events (Moderate drought) for context
+
+```{r functions for RP calc}
+# From https://geco-bern.github.io/cwd/articles/cwd_example.html: 
+# calculate return period as a function of the CWD extreme. Using the two 
+# coefficients of the fitted distribution as arguments
+calc_return_period <- function(x, loc, scale){
+  1 / (1 - exp(-exp(-(x-loc)/scale)))
+}
+
+extract_loc <- function(mod){
+  loc <- mod$results$par[ "location" ]
+  if (!is.null(loc)){
+    return(loc)
+  } else {
+    return(NA)
+  }
+}
+
+extract_scale <- function(mod){
+  scale <- mod$results$par[ "scale" ]
+  if (!is.null(scale)){
+    return(scale)
+  } else {
+    return(NA)
+  }
+}
+```
 
 
 #### rolling effective RP for all regions
@@ -2189,11 +1724,13 @@ calculate 5 yr event return periods
 use_rp <- 5    # return period of interest
 nyears <- 30   # window size
 
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim"
-folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}_tidy") #m001 - m020 in first set
+path <- here::here("data/volc_impact_aggregates/collected_p_pet")
+folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020 in first set
 
 # Extract unique ensemble member identifiers from folder names
 n_ens <- unique(basename(folders))[1:20]
+# Add "_tidy" to each element
+n_ens <- paste0(n_ens, "_tidy")
 
 # Store output
 EVA_regional_ensemble <- list()
@@ -2251,7 +1788,7 @@ for (region in names(corrected_full)) {
 combined_results_5yr_ens <- do.call(rbind, EVA_regional_ensemble)
 
 # Save to file
-write.csv(combined_results_5yr_ens, "~/cwd_global/data/5yr_return_periods_regions_ERA_members.csv", row.names = FALSE) #ModESim all ensemble members
+#write.csv(combined_results_5yr_ens, file = here::here("data/5yr_return_periods_regions_ERA_members.csv"), row.names = FALSE) #ModESim all ensemble members
 
 ################ now for ERA5 ###############################
 ######################### --------------------- 5 year events -------------------------------------------------------------
@@ -2307,7 +1844,7 @@ combined_results_5yr_ERA <- do.call(rbind, EVA_regional)
 
 # Save or process the combined dataframe
 # Example: Save to a CSV file
-write.csv(combined_results_5yr_ERA, "~/cwd_global/data/5yr_return_periods_regions_ERA5Land.csv", row.names = FALSE)
+write.csv(combined_results_5yr_ERA, here::here("data/5yr_return_periods_regions_ERA5Land.csv"), row.names = FALSE)
 
 ```
 
@@ -2315,9 +1852,9 @@ write.csv(combined_results_5yr_ERA, "~/cwd_global/data/5yr_return_periods_region
 
 ```{r timeseries and map plots for each region, echo=FALSE, warning=FALSE, message=FALSE}
 #plot all ensemble members and ensemble mean: 
-combined_df <- read.csv("~/cwd_global/data/5yr_return_periods_regions_ERA_members.csv") #ModESim all ensemble members
-combined_era <- read.csv("~/cwd_global/data/5yr_return_periods_regions_ERA5Land.csv")
-#combined_df$window_size <- "30yr"
+combined_df <- read.csv(here::here("data/5yr_return_periods_regions_ERA_members.csv")) #ModESim all ensemble members
+combined_era <- read.csv(here::here("data/5yr_return_periods_regions_ERA5Land.csv"))
+
 
 ####################################### EUROPE #####################################
 ##### Step 2: Filter European regions for the map and timeseries
@@ -2745,9 +2282,8 @@ warp_time <- function(year) {
 
 
 #plot all ensemble members and ensemble mean: 
-combined_df <- read.csv("~/cwd_global/data/5yr_return_periods_regions_ERA_members.csv")
-combined_era <- read.csv("~/cwd_global/data/5yr_return_periods_regions_ERA5Land.csv")
-#combined_df$window_size <- "30yr"
+combined_df <- read.csv(here::here("data/5yr_return_periods_regions_ERA_members.csv"))
+combined_era <- read.csv(here::here("data/5yr_return_periods_regions_ERA5Land.csv"))
 
 ####################################### EUROPE #####################################
 ##### Step 2: Filter European regions for the map and timeseries
@@ -3069,7 +2605,7 @@ combined_rollingRP <- plot_grid(
 print(combined_rollingRP)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/rollingRP.pdf",
+  filename = here::here("manuscript/rollingRP.pdf"),
   plot     = combined_rollingRP,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -3080,7 +2616,7 @@ ggsave(
 )
 
 ggsave(
-  filename = "~/cwd_global/manuscript/rollingRP_legend.pdf",
+  filename = here::here("manuscript/rollingRP_legend.pdf"),
   plot     = rollingRP_WNA,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -3092,6 +2628,43 @@ ggsave(
 
 ```
 
+How many regions experience a doubling in return period (below every 2.5) in the period 2000 - 2024? 
+
+```{r}
+regions_with_high_RP <- combined_era %>%
+  filter(time >= 2000, time <= 2024, RP <= 2.5) %>%
+  distinct(region)
+
+regions_with_high_RP
+
+combined_era %>%
+  filter(time >= 2000, time <= 2024, RP <= 2.5) %>%
+  distinct(region) %>%
+  count()
+```
+How many regions lie outside the range of return periods covered in the last 600 years? 
+```{r}
+# 1. Get reference ranges (1434–1999) for each region
+ref_range <- combined_df %>%
+  filter(time <= 1999) %>%
+  group_by(region) %>%
+  summarise(ref_min = min(RP, na.rm = TRUE),
+            ref_max = max(RP, na.rm = TRUE),
+            .groups = "drop")
+
+# 2. Compare modern period (2000–2024) to reference range
+modern_outside <- combined_era %>%
+  filter(time >= 2000, time <= 2024) %>%
+  left_join(ref_range, by = "region") %>%
+  filter(RP < ref_min) %>%
+  distinct(region)
+
+# 3. Count how many regions
+n_regions_outside <- nrow(modern_outside)
+
+n_regions_outside
+```
+
 
 #### Scatterplots for modern times:
 first 3: 
@@ -3100,7 +2673,7 @@ first 3:
 3rd: y-axis: ERA5-Land 1995-2024 5 yr vs x-axis: ModE-SIm BC 1970-1999
 
 ```{r}
-corrected_full <- readRDS("data/regionalResults_ModESim_bc.RData")
+corrected_full <- readRDS(here::here("data/regionalResults_ModESim_bc.RData"))
 
 ##calculate return level of 5 year events - 30 year chunks for consistency: 
 #remove SAH due to unphysically large PCWD values - runaway PCWD 
@@ -3139,7 +2712,7 @@ for (region in names(regional_results_ERA5Land_eva)) { #swap european_regions fo
 }
 
 ##### ModE-Sim 
-path <- "data/volc_impact_aggregates/collected_p_pet/"
+path <- here::here("data/volc_impact_aggregates/collected_p_pet/")
 folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020 in first set
 
 # Extract unique ensemble member identifiers from folder names
@@ -3279,8 +2852,6 @@ Plot in scatterplots:
 
 ```{r}
 # #### Overlap period ModE-Sim and ERA5-Land
-# library(dplyr)
-# library(ggplot2)
 
 ####### -------------------- Overlap period --------------------------------
 # 1) Summarise lists into a data.frame:
@@ -3471,7 +3042,7 @@ combined_val_scatter <- plot_grid(
 print(combined_val_scatter)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Scatter_validation_plots.pdf",
+  filename = here::here("manuscript/Scatter_validation_plots.pdf"),
   plot     = combined_val_scatter,
   device   = cairo_pdf,    # better text rendering
   width    = 17,           # in inches
@@ -3494,7 +3065,7 @@ first 2:
 ```{r}
 ##calculate return level of 5 year events - 30 year chunks for consistency: 
 #remove SAH due to unphysically large PCWD values - runaway PCWD 
-regional_results_ERA5Land_eva <- regional_results_ERA5Land[ names(regional_results_ERA5Land) != "SAH" ]
+regional_results_ERA5Land_eva <- regional_results_ERA5Land[names(regional_results_ERA5Land) != "SAH" ]
 
 use_rp <- 30   # return period of two years
 
@@ -3514,7 +3085,7 @@ for (region in names(regional_results_ERA5Land_eva)) { #swap european_regions fo
 }
 
 ##### ModE-Sim 
-path <- "data/volc_impact_aggregates/collected_p_pet/"
+path <- here::here("data/volc_impact_aggregates/collected_p_pet")
 folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020 in first set
 # Extract unique ensemble member identifiers from folder names
 ensemble_member <- unique(basename(folders))[1:20]
@@ -3654,8 +3225,6 @@ Plot in scatterplots:
 
 ```{r}
 # #### Overlap period ModE-Sim and ERA5-Land
-# library(dplyr)
-# library(ggplot2)
 
 ####### -------------------- Early-industrial --------------------------------
 # 1) Summarise lists into a data.frame:
@@ -3842,7 +3411,7 @@ geom_errorbarh(aes(xmin = mod_min_full, xmax = mod_max_full), height = 0) +
   )
 
 ggsave(
-  filename = "figures/scatter_legend.pdf",
+  filename = here::here("manuscript/scatter_legend.pdf"),
  # plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -4003,6 +3572,8 @@ scatter_zoom_full <-
   )
 
 ```
+
+
 Quantify how many regions are within simulated spread
 ```{r}
 #library(dplyr)
@@ -4064,19 +3635,20 @@ df_30yr %>%
   dplyr::select(region, era, mod_min_pre, mod_max_pre)
 
 ```
+
 ##### Show which regions are affected
 
 Load reference region info:
 ```{r}
 #Load reference regions and coastlines:
+load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
 
-load("data/Reference_regions/IPCC-WGI-reference-regions-v4_R.rda", verbose = TRUE)
 # IPCC_WGI_reference_regions_v4 is a Spatial*DataFrame with a column "region" (or similar)
 refregions_sf <- st_as_sf(IPCC_WGI_reference_regions_v4)
 refregions_sf <- refregions_sf %>% rename(region = Acronym)
 
 temp.dir <- tempdir()
-unzip("data/Reference_regions/ne_110m_coastline.zip", exdir = temp.dir)
+unzip(here::here("data/Reference_regions/ne_110m_coastline.zip"), exdir = temp.dir)
 coastLines <- st_read(dsn = temp.dir, layer = "ne_110m_coastline")
 
 names(names(refregions))
@@ -4108,7 +3680,7 @@ continent_mapping_sel <- list(
   "Australia" = c("EAU")
 )
 
-# # Assign continents to regions
+# # Assign continents to only selected regions
 # refregions_sf <- refregions_sf %>%
 #   mutate(
 #     continent = case_when(
@@ -4124,7 +3696,7 @@ continent_mapping_sel <- list(
 #   ) 
 
 
-# Assign continents to regions
+# Assign continents to all regions
 refregions_sf <- refregions_sf %>%
   mutate(
     continent = case_when(
@@ -4270,16 +3842,16 @@ map_all
 
 
 
-ggsave(
-  filename = "~/cwd_global/manuscript/Map_600_yr_exceedance_legend.pdf",
-  plot     = map_all,
-  device   = cairo_pdf,    # better text rendering
-  width    = 10,           # in inches
-  height   =6,            # in inches
-  units    = "in",
-  dpi      = 300,          # for raster elements (if any)
-  bg       = "white"       # white background
-)
+# ggsave(
+#   filename = here::here("manuscript/Map_600_yr_exceedance_legend.pdf"),
+#   plot     = map_all,
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 10,           # in inches
+#   height   =6,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
 
 
 ##17 regions show exceedance compared to the last 600 years 
@@ -4333,17 +3905,18 @@ combined_scatter <- plot_grid(
 
 print(combined_scatter)
 
-ggsave(
-  filename = "~/cwd_global/manuscript/Scatter_plots.pdf",
-  plot     = combined_scatter,
-  device   = cairo_pdf,    # better text rendering
-  width    = 17,           # in inches
-  height   = 13,            # in inches
-  units    = "in",
-  dpi      = 300,          # for raster elements (if any)
-  bg       = "white"       # white background
-)
+# ggsave(
+#   filename = here::here("~/cwd_global/manuscript/Scatter_plots.pdf"),
+#   plot     = combined_scatter,
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 17,           # in inches
+#   height   = 13,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
 ```
+
 
 ```{r}
 ###Calculate t-value for each region for 4 different period sets (preindustrial, early industrial, modern, full ModESim (til 1994))
@@ -4479,7 +4052,7 @@ plot_tvalue_with_hatch <- function(t_column = "t_full", exceed_col = "exceed_pre
 map_full <- plot_tvalue_with_hatch("t_full", "exceed_all")
 
 # ggsave(
-#   filename = "~/cwd_global/manuscript/Scatter_plots_tvalue_full.pdf",
+#   filename = here::here("manuscript/Scatter_plots_tvalue_full.pdf"),
 #   plot = map_full,
 #   device   = cairo_pdf,    # better text rendering
 #   width    = 17,           # in inches
@@ -4543,7 +4116,7 @@ combined_scatter <- plot_grid(
 print(combined_scatter)
 
 ggsave(
-  filename = "~/cwd_global/manuscript/Scatter_plots_tvalue.pdf",
+  filename = here::here("manuscript/Scatter_plots_tvalue.pdf"),
   plot     = combined_scatter,
   device   = cairo_pdf,    # better text rendering
   width    = 17,           # in inches
@@ -4639,15 +4212,15 @@ plot_tvalue_with_hatch <- function(t_column = "t_full", exceed_col = "exceed_pre
 plot_tvalue_with_hatch("t_full", "exceed_all")
 
 
-ggsave(
-  filename = "figures/Scatter_plots_tvalue_legend.pdf",
-  device   = cairo_pdf,    # better text rendering
-  width    = 17,           # in inches
-  height   = 13,            # in inches
-  units    = "in",
-  dpi      = 300,          # for raster elements (if any)
-  bg       = "white"       # white background
-)
+# ggsave(
+#   filename = here::here("manuscript/Scatter_plots_tvalue_legend.pdf"),
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 17,           # in inches
+#   height   = 13,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
 
 ```
 

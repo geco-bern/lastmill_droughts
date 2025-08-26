@@ -41,11 +41,15 @@ library(gridExtra)
 library(scales)
 ```
 
+- Jump to code line 273 for trend attribution - 
+
 ### PCWD len parameter
 Start with analysis of the 'len' variable that describes the length of PCWD events
 
 One ensemble member, one grid cell, 100 years: 
 ```{r}
+#Data for code chunk stored on Ubelix server
+
 # #read in an rds file from one ensemble member that contains daily PCWD and len: 
 # pcwd <- readRDS("/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m008_tidy/02_pcwd_1850/ModESim_pcwd_LON_-138.750.rds")
 
@@ -314,324 +318,324 @@ Start with PCWD:
 
 Aggregate all 1850 files: 
 ```{r}
-# Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
-
-# List all the directories within the base path
-folders <- list.files(path, full.names = TRUE)
-
-# Extract ensemble member identifiers from folder names
-ensemble_members <- basename(folders)
-
-# Identify the target files
-target_files <- file.path(folders, "04_result_1850/PCWD_ANNMAX.nc")
-target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
-
-# Filter ensemble members to match target files
-ensemble_members <- ensemble_members[file.exists(target_files)]
-
-# Initialize a list to store data for each ensemble member
-data_by_ensemble_1850 <- list()
-
-# Extract dimensions from the first file to initialize the array size for consistency
-nc <- nc_open(target_files[1])
-dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
-dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
-dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
-nc_close(nc)
-
-# Loop through all the target files and store the data in a list
-for (i in seq_along(target_files)) {
-  file <- target_files[i]
-  member <- ensemble_members[i]
-  
-  # Open the NetCDF file
-  nc <- nc_open(file)
-  
-  # Extract the data variable
-  data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
-  
-  # Store the data in the list, keyed by the ensemble member
-  data_by_ensemble_1850[[member]] <- data
-  
-  # Close the file
-  nc_close(nc)
-}
-
-# Output the structure of the data list
-print(names(data_by_ensemble_1850))  # Check stored ensemble members
-print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "04_result_1850/PCWD_ANNMAX.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# 
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1850 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+# dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+# dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1850[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1850))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
 
 ```
 
 Aggregate all 1420 files: 
 
 ```{r}
-# Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
-
-# List all the directories within the base path
-folders <- list.files(path, full.names = TRUE)
-
-# Extract ensemble member identifiers from folder names
-ensemble_members <- basename(folders)
-
-# Identify the target files
-target_files <- file.path(folders, "04_result_1420/PCWD_ANNMAX.nc")
-target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
-target_files <- target_files[-1] #remove m001 file
-# Filter ensemble members to match target files
-ensemble_members <- ensemble_members[file.exists(target_files)]
-ensemble_members <- ensemble_members[-1]
-
-# Initialize a list to store data for each ensemble member
-data_by_ensemble_1420 <- list()
-
-# Extract dimensions from the first file to initialize the array size for consistency
-nc <- nc_open(target_files[1])
-dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
-dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
-dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
-nc_close(nc)
-
-# Loop through all the target files and store the data in a list
-for (i in seq_along(target_files)) {
-  file <- target_files[i]
-  member <- ensemble_members[i]
-  
-  # Open the NetCDF file
-  nc <- nc_open(file)
-  
-  # Extract the data variable
-  data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
-  
-  # Store the data in the list, keyed by the ensemble member
-  data_by_ensemble_1420[[member]] <- data
-  
-  # Close the file
-  nc_close(nc)
-}
-
-# Output the structure of the data list
-print(names(data_by_ensemble_1420))  # Check stored ensemble members
-print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "04_result_1420/PCWD_ANNMAX.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# target_files <- target_files[-1] #remove m001 file
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# ensemble_members <- ensemble_members[-1]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1420 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+# dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+# dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1420[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1420))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
 
 ```
 Calculate ensemble means and merge both sets
 
 ```{r}
-#Calculate ensemble mean of ModESim: 
-ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
-
-# Compute the ensemble mean across the 4th dim (EMs)
-PCWD_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
-dim(PCWD_EM_1850)
-
-#Calculate ensemble mean of ModESim: 
-ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
-
-# Compute the ensemble mean across the 4th dim (EMs)
-PCWD_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
-dim(PCWD_EM_1420)
-
-# Load abind package
-library(abind)
-
-# Merge along the 3rd dimension (time)
-PCWD_EM_merged <- abind(PCWD_EM_1420, PCWD_EM_1850, along = 3)
-time_merged <-abind(time_1420, time_1850)
-# Convert to actual dates (days since 2001-01-01)
-reference_date <- as.Date("2001-01-01")
-time_dates_merged <- reference_date + time_merged
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# PCWD_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(PCWD_EM_1850)
+# 
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# PCWD_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(PCWD_EM_1420)
+# 
+# # Load abind package
+# library(abind)
+# 
+# # Merge along the 3rd dimension (time)
+# PCWD_EM_merged <- abind(PCWD_EM_1420, PCWD_EM_1850, along = 3)
+# time_merged <-abind(time_1420, time_1850)
+# # Convert to actual dates (days since 2001-01-01)
+# reference_date <- as.Date("2001-01-01")
+# time_dates_merged <- reference_date + time_merged
 ```
 apply land masking
 ```{r}
-#apply land mask to both ModE-Sim and ERA5-Land to make sure those areas are not bias corrected
-# Step 1: Create a land-sea mask from the natural earth dataset
-land <- ne_countries(scale = "medium", returnclass = "sf")
-land <- st_transform(land, crs = "+proj=longlat +datum=WGS84")
-
-# Step 2: Create a grid with the same lon/lat as gini_values_1850
-grid_df <- expand.grid(lon = lon, lat = lat)
-
-# Step 3: Check which grid cells are land or ocean based on the land polygons
-grid_sf <- st_as_sf(grid_df, coords = c("lon", "lat"), crs = st_crs(land))
-
-# Step 4: Use `st_intersects` to check if each grid cell is land (1) or ocean (0)
-grid_sf$in_land <- st_intersects(grid_sf, land, sparse = FALSE) %>% rowSums() > 0  # TRUE for land, FALSE for ocean
-
-# Step 5: Create a land-sea mask based on the land check and ensure correct dimensions
-land_sea_mask <- matrix(grid_sf$in_land, nrow = 192, ncol = 96, byrow = FALSE)  # Corrected: 192 longitudes, 96 latitudes
-
-apply_land_mask <- function(grid_data, slm) {
-  # grid_data: 3D array [lon, lat, time]
-  # slm:    2D logical matrix [lon, lat] TRUE=land, FALSE=ocean
-
-  # Make a copy
-  masked_array <- grid_data
-
-  # Number of time steps
-  nt <- dim(grid_data)[3]
-
-  for (t in seq_len(nt)) {
-    # grab the lon×lat slice at time t
-    slice <- masked_array[ , , t]
-    # set ocean cells to NA
-    slice[!slm] <- NA
-    # put it back
-    masked_array[ , , t] <- slice
-  }
-
-  return(masked_array)
-}
-
-# Apply land-sea mask 
-PCWD_EM_merged_masked <- apply_land_mask(PCWD_EM_merged, land_sea_mask)
+# #apply land mask to both ModE-Sim and ERA5-Land to make sure those areas are not bias corrected
+# # Step 1: Create a land-sea mask from the natural earth dataset
+# land <- ne_countries(scale = "medium", returnclass = "sf")
+# land <- st_transform(land, crs = "+proj=longlat +datum=WGS84")
+# 
+# # Step 2: Create a grid with the same lon/lat as gini_values_1850
+# grid_df <- expand.grid(lon = lon, lat = lat)
+# 
+# # Step 3: Check which grid cells are land or ocean based on the land polygons
+# grid_sf <- st_as_sf(grid_df, coords = c("lon", "lat"), crs = st_crs(land))
+# 
+# # Step 4: Use `st_intersects` to check if each grid cell is land (1) or ocean (0)
+# grid_sf$in_land <- st_intersects(grid_sf, land, sparse = FALSE) %>% rowSums() > 0  # TRUE for land, FALSE for ocean
+# 
+# # Step 5: Create a land-sea mask based on the land check and ensure correct dimensions
+# land_sea_mask <- matrix(grid_sf$in_land, nrow = 192, ncol = 96, byrow = FALSE)  # Corrected: 192 longitudes, 96 latitudes
+# 
+# apply_land_mask <- function(grid_data, slm) {
+#   # grid_data: 3D array [lon, lat, time]
+#   # slm:    2D logical matrix [lon, lat] TRUE=land, FALSE=ocean
+# 
+#   # Make a copy
+#   masked_array <- grid_data
+# 
+#   # Number of time steps
+#   nt <- dim(grid_data)[3]
+# 
+#   for (t in seq_len(nt)) {
+#     # grab the lon×lat slice at time t
+#     slice <- masked_array[ , , t]
+#     # set ocean cells to NA
+#     slice[!slm] <- NA
+#     # put it back
+#     masked_array[ , , t] <- slice
+#   }
+# 
+#   return(masked_array)
+# }
+# 
+# # Apply land-sea mask 
+# PCWD_EM_merged_masked <- apply_land_mask(PCWD_EM_merged, land_sea_mask)
 
 # #save masked PCWD ensemble mean data 
 # saveRDS(PCWD_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/PCWD_EM_masked_600yr.rds")
-PCWD_EM_merged_masked <- readRDS("/storage/homefs/ph23v078/cwd_global/data/PCWD_EM_masked_600yr.rds")
+PCWD_EM_merged_masked <- readRDS(here("data/PCWD_EM_masked_600yr.rds"))
 
 ```
 
 
 Repeat for total precipitation: 
 ```{r}
-# Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
-
-# List all the directories within the base path
-folders <- list.files(path, full.names = TRUE)
-
-# Extract ensemble member identifiers from folder names
-ensemble_members <- basename(folders)
-
-# Identify the target files
-target_files <- file.path(folders, "Collected_Total_P_1850/Total_P.nc") 
-target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
-
-# Filter ensemble members to match target files
-ensemble_members <- ensemble_members[file.exists(target_files)]
-
-# Initialize a list to store data for each ensemble member
-data_by_ensemble_1850 <- list()
-
-# Extract dimensions from the first file to initialize the array size for consistency
-nc <- nc_open(target_files[1])
-dim_x <- dim(ncvar_get(nc, "total_precip"))[1]
-dim_y <- dim(ncvar_get(nc, "total_precip"))[2]
-dim_z <- dim(ncvar_get(nc, "total_precip"))[3]
-nc_close(nc)
-
-# Loop through all the target files and store the data in a list
-for (i in seq_along(target_files)) {
-  file <- target_files[i]
-  member <- ensemble_members[i]
-  
-  # Open the NetCDF file
-  nc <- nc_open(file)
-  
-  # Extract the data variable
-  data <- ncvar_get(nc, "total_precip")  # Adjust "tot_precip" to your variable name
-  
-  # Store the data in the list, keyed by the ensemble member
-  data_by_ensemble_1850[[member]] <- data
-  
-  # Close the file
-  nc_close(nc)
-}
-
-# Output the structure of the data list
-print(names(data_by_ensemble_1850))  # Check stored ensemble members
-print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "Collected_Total_P_1850/Total_P.nc") 
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# 
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1850 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "total_precip"))[1]
+# dim_y <- dim(ncvar_get(nc, "total_precip"))[2]
+# dim_z <- dim(ncvar_get(nc, "total_precip"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "total_precip")  # Adjust "tot_precip" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1850[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1850))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
 
 ```
 
 Aggregate all 1420 files: 
 
 ```{r}
-# Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
-
-# List all the directories within the base path
-folders <- list.files(path, full.names = TRUE)
-
-# Extract ensemble member identifiers from folder names
-ensemble_members <- basename(folders)
-
-# Identify the target files
-target_files <- file.path(folders, "Collected_Total_P_1420/Total_P.nc")
-target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
-target_files <- target_files[-1] #remove m001 file
-# Filter ensemble members to match target files
-ensemble_members <- ensemble_members[file.exists(target_files)]
-ensemble_members <- ensemble_members[-1]
-
-# Initialize a list to store data for each ensemble member
-data_by_ensemble_1420 <- list()
-
-# Extract dimensions from the first file to initialize the array size for consistency
-nc <- nc_open(target_files[1])
-dim_x <- dim(ncvar_get(nc, "total_precip"))[1]
-dim_y <- dim(ncvar_get(nc, "total_precip"))[2]
-dim_z <- dim(ncvar_get(nc, "total_precip"))[3]
-nc_close(nc)
-
-# Loop through all the target files and store the data in a list
-for (i in seq_along(target_files)) {
-  file <- target_files[i]
-  member <- ensemble_members[i]
-  
-  # Open the NetCDF file
-  nc <- nc_open(file)
-  
-  # Extract the data variable
-  data <- ncvar_get(nc, "total_precip")  # Adjust "pcwd_annmax" to your variable name
-  
-  # Store the data in the list, keyed by the ensemble member
-  data_by_ensemble_1420[[member]] <- data
-  
-  # Close the file
-  nc_close(nc)
-}
-
-# Output the structure of the data list
-print(names(data_by_ensemble_1420))  # Check stored ensemble members
-print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "Collected_Total_P_1420/Total_P.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# target_files <- target_files[-1] #remove m001 file
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# ensemble_members <- ensemble_members[-1]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1420 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "total_precip"))[1]
+# dim_y <- dim(ncvar_get(nc, "total_precip"))[2]
+# dim_z <- dim(ncvar_get(nc, "total_precip"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "total_precip")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1420[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1420))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
 
 ```
 Calculate ensemble means and merge both sets
 
 ```{r}
-#Calculate ensemble mean of ModESim: 
-ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
-
-# Compute the ensemble mean across the 4th dim (EMs)
-P_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
-dim(P_EM_1850)
-
-#Calculate ensemble mean of ModESim: 
-ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
-
-# Compute the ensemble mean across the 4th dim (EMs)
-P_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
-dim(P_EM_1420)
-
-# Load abind package
-library(abind)
-
-# Merge along the 3rd dimension (time)
-P_EM_merged <- abind(P_EM_1420, P_EM_1850, along = 3)
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# P_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(P_EM_1850)
+# 
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# P_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
+# dim(P_EM_1420)
+# 
+# # Load abind package
+# library(abind)
+# 
+# # Merge along the 3rd dimension (time)
+# P_EM_merged <- abind(P_EM_1420, P_EM_1850, along = 3)
 ```
 
 apply land masking
 ```{r}
-# Apply land-sea mask 
-P_EM_merged_masked <- apply_land_mask(P_EM_merged, land_sea_mask)
-
-# #save masked Precip ensemble mean data 
-saveRDS(P_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/P_EM_masked_600yr.rds")
-P_EM_merged_masked <- readRDS("/storage/homefs/ph23v078/cwd_global/data/P_EM_masked_600yr.rds")
+# # Apply land-sea mask 
+# P_EM_merged_masked <- apply_land_mask(P_EM_merged, land_sea_mask)
+# 
+# # #save masked Precip ensemble mean data 
+# saveRDS(P_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/P_EM_masked_600yr.rds")
+P_EM_merged_masked <- readRDS(here("data/P_EM_masked_600yr.rds"))
 
 
 ```
@@ -639,141 +643,141 @@ P_EM_merged_masked <- readRDS("/storage/homefs/ph23v078/cwd_global/data/P_EM_mas
 
 Repeat for PET: 
 ```{r}
-# Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
-
-# List all the directories within the base path
-folders <- list.files(path, full.names = TRUE)
-
-# Extract ensemble member identifiers from folder names
-ensemble_members <- basename(folders)
-
-# Identify the target files
-target_files <- file.path(folders, "Collected_Total_PET_1850/Total_PET.nc") 
-target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
-
-# Filter ensemble members to match target files
-ensemble_members <- ensemble_members[file.exists(target_files)]
-
-# Initialize a list to store data for each ensemble member
-data_by_ensemble_1850 <- list()
-
-# Extract dimensions from the first file to initialize the array size for consistency
-nc <- nc_open(target_files[1])
-dim_x <- dim(ncvar_get(nc, "total_pet"))[1]
-dim_y <- dim(ncvar_get(nc, "total_pet"))[2]
-dim_z <- dim(ncvar_get(nc, "total_pet"))[3]
-nc_close(nc)
-
-# Loop through all the target files and store the data in a list
-for (i in seq_along(target_files)) {
-  file <- target_files[i]
-  member <- ensemble_members[i]
-  
-  # Open the NetCDF file
-  nc <- nc_open(file)
-  
-  # Extract the data variable
-  data <- ncvar_get(nc, "total_pet")  # Adjust "tot_precip" to your variable name
-  
-  # Store the data in the list, keyed by the ensemble member
-  data_by_ensemble_1850[[member]] <- data
-  
-  # Close the file
-  nc_close(nc)
-}
-
-# Output the structure of the data list
-print(names(data_by_ensemble_1850))  # Check stored ensemble members
-print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "Collected_Total_PET_1850/Total_PET.nc") 
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# 
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1850 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "total_pet"))[1]
+# dim_y <- dim(ncvar_get(nc, "total_pet"))[2]
+# dim_z <- dim(ncvar_get(nc, "total_pet"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "total_pet")  # Adjust "tot_precip" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1850[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1850))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
 
 ```
 
 Aggregate all 1420 files: 
 
 ```{r}
-# Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
-
-# List all the directories within the base path
-folders <- list.files(path, full.names = TRUE)
-
-# Extract ensemble member identifiers from folder names
-ensemble_members <- basename(folders)
-
-# Identify the target files
-target_files <- file.path(folders, "Collected_Total_PET_1420/Total_PET.nc")
-target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
-target_files <- target_files[-1] #remove m001 file
-# Filter ensemble members to match target files
-ensemble_members <- ensemble_members[file.exists(target_files)]
-ensemble_members <- ensemble_members[-1]
-
-# Initialize a list to store data for each ensemble member
-data_by_ensemble_1420 <- list()
-
-# Extract dimensions from the first file to initialize the array size for consistency
-nc <- nc_open(target_files[1])
-dim_x <- dim(ncvar_get(nc, "total_pet"))[1]
-dim_y <- dim(ncvar_get(nc, "total_pet"))[2]
-dim_z <- dim(ncvar_get(nc, "total_pet"))[3]
-nc_close(nc)
-
-# Loop through all the target files and store the data in a list
-for (i in seq_along(target_files)) {
-  file <- target_files[i]
-  member <- ensemble_members[i]
-  
-  # Open the NetCDF file
-  nc <- nc_open(file)
-  
-  # Extract the data variable
-  data <- ncvar_get(nc, "total_pet")  # Adjust "pcwd_annmax" to your variable name
-  
-  # Store the data in the list, keyed by the ensemble member
-  data_by_ensemble_1420[[member]] <- data
-  
-  # Close the file
-  nc_close(nc)
-}
-
-# Output the structure of the data list
-print(names(data_by_ensemble_1420))  # Check stored ensemble members
-print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "Collected_Total_PET_1420/Total_PET.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# target_files <- target_files[-1] #remove m001 file
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# ensemble_members <- ensemble_members[-1]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1420 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "total_pet"))[1]
+# dim_y <- dim(ncvar_get(nc, "total_pet"))[2]
+# dim_z <- dim(ncvar_get(nc, "total_pet"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "total_pet")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1420[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1420))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
 
 ```
 Calculate ensemble means and merge both sets
 
 ```{r}
-#Calculate ensemble mean of ModESim: 
-ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
-
-# Compute the ensemble mean across the 4th dim (EMs)
-PET_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
-dim(PET_EM_1850)
-
-#Calculate ensemble mean of ModESim: 
-ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
-
-# Compute the ensemble mean across the 4th dim (EMs)
-PET_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
-dim(PET_EM_1420)
-
-# Load abind package
-library(abind)
-
-# Merge along the 3rd dimension (time)
-PET_EM_merged <- abind(PET_EM_1420, PET_EM_1850, along = 3)
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# PET_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(PET_EM_1850)
+# 
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# PET_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
+# dim(PET_EM_1420)
+# 
+# # Load abind package
+# library(abind)
+# 
+# # Merge along the 3rd dimension (time)
+# PET_EM_merged <- abind(PET_EM_1420, PET_EM_1850, along = 3)
 ```
 
 apply land masking
 ```{r}
-# Apply land-sea mask 
-PET_EM_merged_masked <- apply_land_mask(PET_EM_merged, land_sea_mask)
-
-# #save masked Precip ensemble mean data 
-saveRDS(PET_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/PET_EM_masked_600yr.rds")
-PET_EM_merged_masked <- readRDS("/storage/homefs/ph23v078/cwd_global/data/PET_EM_masked_600yr.rds")
+# # Apply land-sea mask 
+# PET_EM_merged_masked <- apply_land_mask(PET_EM_merged, land_sea_mask)
+# 
+# # #save masked Precip ensemble mean data 
+# saveRDS(PET_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/PET_EM_masked_600yr.rds")
+PET_EM_merged_masked <- readRDS(here("data/PET_EM_masked_600yr.rds"))
 
 
 ```
@@ -781,141 +785,141 @@ PET_EM_merged_masked <- readRDS("/storage/homefs/ph23v078/cwd_global/data/PET_EM
 
 Finally repeat for LEN 
 ```{r}
-# Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
-
-# List all the directories within the base path
-folders <- list.files(path, full.names = TRUE)
-
-# Extract ensemble member identifiers from folder names
-ensemble_members <- basename(folders)
-
-# Identify the target files
-target_files <- file.path(folders, "02_2_pcwd_result_1850/PCWD_maxlen.nc") 
-target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
-
-# Filter ensemble members to match target files
-ensemble_members <- ensemble_members[file.exists(target_files)]
-
-# Initialize a list to store data for each ensemble member
-data_by_ensemble_1850 <- list()
-
-# Extract dimensions from the first file to initialize the array size for consistency
-nc <- nc_open(target_files[1])
-dim_x <- dim(ncvar_get(nc, "pcwd_maxlen"))[1]
-dim_y <- dim(ncvar_get(nc, "pcwd_maxlen"))[2]
-dim_z <- dim(ncvar_get(nc, "pcwd_maxlen"))[3]
-nc_close(nc)
-
-# Loop through all the target files and store the data in a list
-for (i in seq_along(target_files)) {
-  file <- target_files[i]
-  member <- ensemble_members[i]
-  
-  # Open the NetCDF file
-  nc <- nc_open(file)
-  
-  # Extract the data variable
-  data <- ncvar_get(nc, "pcwd_maxlen")  # Adjust "tot_precip" to your variable name
-  
-  # Store the data in the list, keyed by the ensemble member
-  data_by_ensemble_1850[[member]] <- data
-  
-  # Close the file
-  nc_close(nc)
-}
-
-# Output the structure of the data list
-print(names(data_by_ensemble_1850))  # Check stored ensemble members
-print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "02_2_pcwd_result_1850/PCWD_maxlen.nc") 
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# 
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1850 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "pcwd_maxlen"))[1]
+# dim_y <- dim(ncvar_get(nc, "pcwd_maxlen"))[2]
+# dim_z <- dim(ncvar_get(nc, "pcwd_maxlen"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "pcwd_maxlen")  # Adjust "tot_precip" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1850[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1850))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
 
 ```
 
 Aggregate all 1420 files: 
 
 ```{r}
-# Define the base path
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
-
-# List all the directories within the base path
-folders <- list.files(path, full.names = TRUE)
-
-# Extract ensemble member identifiers from folder names
-ensemble_members <- basename(folders)
-
-# Identify the target files
-target_files <- file.path(folders, "02_2_pcwd_result_1420/PCWD_maxlen.nc")
-target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
-target_files <- target_files[-1] #remove m001 file
-# Filter ensemble members to match target files
-ensemble_members <- ensemble_members[file.exists(target_files)]
-ensemble_members <- ensemble_members[-1]
-
-# Initialize a list to store data for each ensemble member
-data_by_ensemble_1420 <- list()
-
-# Extract dimensions from the first file to initialize the array size for consistency
-nc <- nc_open(target_files[1])
-dim_x <- dim(ncvar_get(nc, "pcwd_maxlen"))[1]
-dim_y <- dim(ncvar_get(nc, "pcwd_maxlen"))[2]
-dim_z <- dim(ncvar_get(nc, "pcwd_maxlen"))[3]
-nc_close(nc)
-
-# Loop through all the target files and store the data in a list
-for (i in seq_along(target_files)) {
-  file <- target_files[i]
-  member <- ensemble_members[i]
-  
-  # Open the NetCDF file
-  nc <- nc_open(file)
-  
-  # Extract the data variable
-  data <- ncvar_get(nc, "pcwd_maxlen")  # Adjust "pcwd_annmax" to your variable name
-  
-  # Store the data in the list, keyed by the ensemble member
-  data_by_ensemble_1420[[member]] <- data
-  
-  # Close the file
-  nc_close(nc)
-}
-
-# Output the structure of the data list
-print(names(data_by_ensemble_1420))  # Check stored ensemble members
-print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "02_2_pcwd_result_1420/PCWD_maxlen.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# target_files <- target_files[-1] #remove m001 file
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# ensemble_members <- ensemble_members[-1]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1420 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "pcwd_maxlen"))[1]
+# dim_y <- dim(ncvar_get(nc, "pcwd_maxlen"))[2]
+# dim_z <- dim(ncvar_get(nc, "pcwd_maxlen"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "pcwd_maxlen")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1420[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1420))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
 
 ```
 Calculate ensemble means and merge both sets
 
 ```{r}
-#Calculate ensemble mean of ModESim: 
-ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
-
-# Compute the ensemble mean across the 4th dim (EMs)
-LEN_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
-dim(LEN_EM_1850)
-
-#Calculate ensemble mean of ModESim: 
-ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
-
-# Compute the ensemble mean across the 4th dim (EMs)
-LEN_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
-dim(LEN_EM_1420)
-
-# Load abind package
-library(abind)
-
-# Merge along the 3rd dimension (time)
-LEN_EM_merged <- abind(LEN_EM_1420, LEN_EM_1850, along = 3)
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# LEN_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(LEN_EM_1850)
+# 
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# LEN_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
+# dim(LEN_EM_1420)
+# 
+# # Load abind package
+# library(abind)
+# 
+# # Merge along the 3rd dimension (time)
+# LEN_EM_merged <- abind(LEN_EM_1420, LEN_EM_1850, along = 3)
 ```
 
 apply land masking
 ```{r}
-# Apply land-sea mask 
-LEN_EM_merged_masked <- apply_land_mask(LEN_EM_merged, land_sea_mask)
-
-# #save masked Precip ensemble mean data 
-saveRDS(LEN_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/LEN_EM_masked_600yr.rds")
-LEN_EM_merged_masked <- readRDS("/storage/homefs/ph23v078/cwd_global/data/LEN_EM_masked_600yr.rds")
+# # Apply land-sea mask 
+# LEN_EM_merged_masked <- apply_land_mask(LEN_EM_merged, land_sea_mask)
+# 
+# # #save masked Precip ensemble mean data 
+# saveRDS(LEN_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/LEN_EM_masked_600yr.rds")
+LEN_EM_merged_masked <- readRDS(here("data/LEN_EM_masked_600yr.rds"))
 
 
 ```
@@ -1279,7 +1283,7 @@ p9<-
   theme(legend.position = "right", plot.title = element_text(size=14, hjust = 0),plot.margin = margin(0,0,0,0), legend.title = element_text(face = "bold"))
 
 ggsave(
-  filename = "~/cwd_global/manuscript/trendAttribution_R2legend.pdf",
+  filename = here::here("manuscript/trendAttribution_R2legend.pdf"),
   plot     = p9,
   device   = cairo_pdf,    # better text rendering
   width    = 16,           # in inches
@@ -1324,7 +1328,7 @@ combined_trendAttr <- plot_grid(
 
 
 ggsave(
-  filename = "~/cwd_global/manuscript/trendAttribution.pdf",
+  filename = here::here("manuscript/trendAttribution.pdf"),
   plot     = combined_trendAttr,
   device   = cairo_pdf,    # better text rendering
   width    = 16,           # in inches

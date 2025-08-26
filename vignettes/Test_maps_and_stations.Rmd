@@ -33,7 +33,7 @@ library(sf)
 
 
 ```{r read data from netcdf, echo=FALSE}
-##read in data
+##read in data - stored on Ubelix server
 input_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850_AbsTrsh/PCWD_ANNMAX.nc"
 nc_pwcd_1850 <- nc_open(input_file)
 pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")

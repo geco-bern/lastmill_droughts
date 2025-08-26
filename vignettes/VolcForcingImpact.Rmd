@@ -7,9 +7,6 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-setwd("~/Bern/Master thesis/R/lastmill_droughts")
-knitr::opts_knit$set(root.dir = "~/Bern/Master thesis/R/lastmill_droughts")
-
 
 ```
 
@@ -43,7 +40,7 @@ Read in extracted annmax pcwd, annual total precip and total pet data for 1420-1
 
 ```{r}
 ##get dimensions from one ensemble member
-nc_file <- "data/volc_impact_aggregates/collected_p_pet/m019/tot_precip_tot_p_pet.nc"
+nc_file <- here::here("data/volc_impact_aggregates/collected_p_pet/m019/tot_precip_tot_p_pet.nc")
 nc_precip <- nc_open(nc_file)
 precip <- ncvar_get(nc_precip, varid = "tot_precip")
 lat <- ncvar_get(nc_precip, varid = "lat")
@@ -51,12 +48,12 @@ lon <- ncvar_get(nc_precip, varid = "lon")
 time <- ncvar_get(nc_precip,varid = "time")
 nc_close(nc_precip)
 
-nc_file <- "data/volc_impact_aggregates/collected_p_pet/m019/tot_pet_tot_p_pet.nc"
+nc_file <- here::here("data/volc_impact_aggregates/collected_p_pet/m019/tot_pet_tot_p_pet.nc")
 nc_pet <- nc_open(nc_file)
 pet <- ncvar_get(nc_pet, varid = "tot_pet")
 nc_close(nc_pet)
 
-nc_file <-"data/volc_impact_aggregates/collected_p_pet/m019/max_deficit_tot_p_pet.nc"
+nc_file <- here::here("data/volc_impact_aggregates/collected_p_pet/m019/max_deficit_tot_p_pet.nc")
 nc_pcwd <- nc_open(nc_file)
 pcwd <- ncvar_get(nc_pcwd, varid = "max_deficit")
 nc_close(nc_pcwd)
@@ -71,7 +68,7 @@ PRECIP
 ```{r}
 #### total precipitation: 
 # Define the base path
-path <- "data/volc_impact_aggregates/collected_p_pet/"
+path <- here::here("data/volc_impact_aggregates/collected_p_pet/")
 
 # List all the directories within the base path
 folders <- list.files(path, full.names = TRUE)
@@ -132,7 +129,7 @@ PET
 ```{r}
 #### total precipitation: 
 # Define the base path
-path <- "data/volc_impact_aggregates/collected_p_pet/"
+path <- here::here("data/volc_impact_aggregates/collected_p_pet/")
 
 # List all the directories within the base path
 folders <- list.files(path, full.names = TRUE)
@@ -190,7 +187,7 @@ PCWD
 ```{r}
 #### total precipitation: 
 # Define the base path
-path <- "data/volc_impact_aggregates/collected_p_pet/"
+path <- here::here("data/volc_impact_aggregates/collected_p_pet/")
 
 # List all the directories within the base path
 folders <- list.files(path, full.names = TRUE)
@@ -548,7 +545,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -569,7 +566,6 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1783)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -617,7 +613,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -638,7 +634,6 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1784)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -685,7 +680,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -706,7 +701,6 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1815)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -754,7 +748,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -775,7 +769,6 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1816)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -1111,7 +1104,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -1132,7 +1125,6 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1783)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -1180,7 +1172,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -1201,7 +1193,6 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1784)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -1248,7 +1239,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -1269,7 +1260,7 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
+ 
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1815)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -1317,7 +1308,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -1338,7 +1329,7 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
+ 
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1816)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -1748,7 +1739,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -1769,7 +1760,7 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
+ 
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1783)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -1817,7 +1808,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -1838,7 +1829,7 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
+ 
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1784)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -1885,7 +1876,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -1906,7 +1897,7 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
+ 
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1815)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  
@@ -1954,7 +1945,7 @@ custom_bins <- c(-100, -80, -60, -40, -20, -10, 0, 10, 20, 40, 60, 80, 100)
 n_intervals <- length(custom_bins) - 1    # 12
 
 # build a smooth 12‐step RdBu diverging palette (blue for drops, red for increases)
-library(RColorBrewer)
+ 
 base_pal <- brewer.pal(11, "RdBu")       # RdBu has 11 base colours
 custom_colors <- colorRampPalette(base_pal)(n_intervals)
 custom_colors_rev <- rev(custom_colors)  # so negatives (drops) are blue
@@ -1975,7 +1966,6 @@ r_df$cat <- cut(
 )
 
 # 7) plot
-library(ggplot2)
 ggplot() +
   geom_raster(data = r_df, aes(x=x, y=y, fill=cat), na.rm = TRUE) +
   scale_fill_manual(name = "% change (ref → 1816)", values = c("Ocean" = "grey50", setNames(custom_colors_rev, lbls)),  

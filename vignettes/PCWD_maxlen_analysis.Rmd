@@ -43,6 +43,8 @@ library(gridExtra)
 # Calculating regional averages of drought duration values 
 
 ```{r regions setup, echo=FALSE, warning=FALSE, message=FALSE}
+# Data on Ubelix server
+
 #Load reference regions and coastlines:
 
 load("/storage/homefs/ph23v078/Reference_regions/IPCC-WGI-reference-regions-v4_R.rda", verbose = TRUE)

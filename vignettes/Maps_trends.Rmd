@@ -52,7 +52,7 @@ library(gridExtra)
 Read in lat, lon and time info: 
 ```{r}
 #lat lon and time info from netcdf files
-##read in data
+##read in data - stored on Ubelix server 
 input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
 input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
 

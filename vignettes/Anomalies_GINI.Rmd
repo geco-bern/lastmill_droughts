@@ -52,8 +52,8 @@ Load regional aggregated data:
 ```{r}
 #read in aggregated regional data
 # #Load with
-regional_results_1420 <- readRDS("~/cwd_global/data/regionalResults_1420_1.RData")
-regional_results_1850 <- readRDS("~/cwd_global/data/regionalResults_1850_1.RData")
+regional_results_1420 <- readRDS(here("data/regionalResults_1420_1.RData"))
+regional_results_1850 <- readRDS(here("data/regionalResults_1850_1.RData"))
 
 ### Remove m001_tidy for areas CAU, EAU, NAU, NZ, SAU, RFE, EAS, SEA
 # List of regions where the first ensemble member should be removed
@@ -84,67 +84,67 @@ continent_mapping <- list(
 
 Load volcanic forcing data for ModE-Sim set 1:
 ```{r}
-#read in volcanic forcing data for set 1: 
-#AOD years 1000 C.E. to 1900 C.E.:
-input_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/ModESim_forcings/1420_1/eva_holo2.2_forcing_echam_T63_ir_1000-1900.nc"
-nc_forcings <- nc_open(input_file)
-aod = ncvar_get(nc_forcings, varid="aod")[6,,] # index 6 for 500nm wavelength
-lat = ncvar_get(nc_forcings, varid="lat")
-time_1420 = ncvar_get(nc_forcings, varid="time")
-time_units <- ncatt_get(nc_forcings, "time", "units")  # Check the time units (e.g., "days since 0001-01-01")
-nc_close(nc_forcings)
-
-########### Calculate annual mean values for first epoch years:
-# Define the years of interest
-years_of_interest <- 1420:1849
-
-# Find indices of columns corresponding to the desired years
-selected_indices <- which(time_1420 %in% years_of_interest)
-
-# Subset the matrix to include only those years
-aod_selected <- aod[, selected_indices]
-time_selected <- time_1420[selected_indices]  # Corresponding time values
-
-### compute annual mean over latitudes:
-# Compute the mean over latitudes (first dimension)
-mean_latitude <- apply(aod_selected, 2, mean, na.rm = TRUE)
-# Create a data frame from the two lists
-df <- data.frame(
-  AOD = mean_latitude,
-  year = time_selected
-)
-
-# Calculate the annual mean AOD value (ignoring NA values)
-annual_mean_AOD <- df %>%
-  group_by(year) %>%
-  summarise(mean_AOD = mean(AOD, na.rm = TRUE))
-
-# Create the corresponding months (repeating each year 12 times)
-months <- rep(1:12, length(time_selected) / 12)  # Assuming 12 months for each year
-
-# Create the "yyyy-mm" format using the year and month
-dates <- paste(time_selected, sprintf("%02d", months), sep = "-")  # sprintf adds leading zero for months < 10
-
-# Now dates is in "yyyy-mm" format
-head(dates)  # Check the first few entrie
-
-# Convert to a data frame for easier manipulation
-aod_1420_df <- data.frame(dates = dates, mean_value = mean_latitude)
-
-# Compute the monthly !!! mean (since each year has 12 monthly values)
-library(dplyr)
-aod_annual_mean_1420 <- aod_1420_df %>%
-  group_by(dates) %>%
-  summarise(annual_mean_value = mean(mean_value, na.rm = TRUE))
-
-#write.csv(aod_annual_mean_1420, "~/cwd_global/data/AOD_annual_mean_1420epoch.csv")
+# #read in volcanic forcing data for set 1: 
+# #AOD years 1000 C.E. to 1900 C.E.:
+# input_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/ModESim_forcings/1420_1/eva_holo2.2_forcing_echam_T63_ir_1000-1900.nc"
+# nc_forcings <- nc_open(input_file)
+# aod = ncvar_get(nc_forcings, varid="aod")[6,,] # index 6 for 500nm wavelength
+# lat = ncvar_get(nc_forcings, varid="lat")
+# time_1420 = ncvar_get(nc_forcings, varid="time")
+# time_units <- ncatt_get(nc_forcings, "time", "units")  # Check the time units (e.g., "days since 0001-01-01")
+# nc_close(nc_forcings)
+# 
+# ########### Calculate annual mean values for first epoch years:
+# # Define the years of interest
+# years_of_interest <- 1420:1849
+# 
+# # Find indices of columns corresponding to the desired years
+# selected_indices <- which(time_1420 %in% years_of_interest)
+# 
+# # Subset the matrix to include only those years
+# aod_selected <- aod[, selected_indices]
+# time_selected <- time_1420[selected_indices]  # Corresponding time values
+# 
+# ### compute annual mean over latitudes:
+# # Compute the mean over latitudes (first dimension)
+# mean_latitude <- apply(aod_selected, 2, mean, na.rm = TRUE)
+# # Create a data frame from the two lists
+# df <- data.frame(
+#   AOD = mean_latitude,
+#   year = time_selected
+# )
+# 
+# # Calculate the annual mean AOD value (ignoring NA values)
+# annual_mean_AOD <- df %>%
+#   group_by(year) %>%
+#   summarise(mean_AOD = mean(AOD, na.rm = TRUE))
+# 
+# # Create the corresponding months (repeating each year 12 times)
+# months <- rep(1:12, length(time_selected) / 12)  # Assuming 12 months for each year
+# 
+# # Create the "yyyy-mm" format using the year and month
+# dates <- paste(time_selected, sprintf("%02d", months), sep = "-")  # sprintf adds leading zero for months < 10
+# 
+# # Now dates is in "yyyy-mm" format
+# head(dates)  # Check the first few entrie
+# 
+# # Convert to a data frame for easier manipulation
+# aod_1420_df <- data.frame(dates = dates, mean_value = mean_latitude)
+# 
+# # Compute the monthly !!! mean (since each year has 12 monthly values)
+# library(dplyr)
+# aod_annual_mean_1420 <- aod_1420_df %>%
+#   group_by(dates) %>%
+#   summarise(annual_mean_value = mean(mean_value, na.rm = TRUE))
+# 
+# #write.csv(aod_annual_mean_1420, "~/cwd_global/data/AOD_annual_mean_1420epoch.csv")
 
 
 ####read in data: 
 ##### volc forcing for 1420 - global annual mean: 
-aod_annual_mean_1420 <- read.csv("~/cwd_global/data/AOD_annual_mean_1420epoch.csv")
+aod_annual_mean_1420 <- read.csv(here("data/AOD_annual_mean_1420epoch.csv"))
 ##### volc forcing for 1850 - global annual mean: 
-aod_annual_mean_1850 <- read.csv("~/cwd_global/data/AOD_annual_mean_1850epoch.csv")
+aod_annual_mean_1850 <- read.csv(here("data/AOD_annual_mean_1850epoch.csv"))
 aod_annual_mean_1850 <- aod_annual_mean_1850 %>% 
   rename(
     year = Year,

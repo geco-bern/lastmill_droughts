@@ -45,7 +45,7 @@ Read in data - 20 Ensemble members of global annmax PCWD DOY values
 Read in lat, lon and time info: 
 ```{r}
 #lat lon and time info from netcdf files
-##read in data
+##read in data - stored on Ubelix server
 input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/06_DOY_1850/PCWD_ANNMAX_DOY.nc"
 input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/06_DOY_1420/PCWD_ANNMAX_DOY.nc"
 
