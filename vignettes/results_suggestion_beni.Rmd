@@ -1,5 +1,5 @@
 ---
-title: "Results suggestion"
+title: "Results suggestion: Are 21st century droughts unprecedented?"
 author: "Beni Stocker"
 date: "2025-08-25"
 output: html_document
@@ -13,15 +13,30 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(here)
 library(slider)
+library(extRemes)
 ```
 
+## Approach
+
+Determining whether 21st century droughts are unprecedented and quantifying their "extremeness" depends on the reference. Here, we determine these aspects based on alternative choices of the reference:
+
+1. 20th century climate reanalysis data (effectively 1970-1999)
+2. Historical climate model simulation, single member (1850-1999)
+3. Multi-centennial large ensemble (N = 20) climate model simulation (1420-1999)
+
+The magnitude of 21st century droughts are estimated based on climate reanalysis data for years 2000-2024.
 
 ## Read data
 
 Interpreting the objects into nice and tidy data frames. Select only for one region ('MED' here).
 ```{r}
+list_era5 <- read_rds(here("data/regional_results_ERA5Land.rds"))
+
+# extract region names
+regions <- names(list_era5)
+
 df_era5 <- tibble(
-  pcwd = read_rds(here("data/regional_results_ERA5Land.rds"))$MED
+  pcwd = list_era5$MED
   ) |> 
   # not sure this is correct. Better to take years forward as part of the workflow. 
   mutate(year = 1970:2024)
@@ -46,28 +61,62 @@ df_modesim_long <- df_modesim |>
 
 Determine single maximum in reference
 ```{r}
-max_modesim <- df_modesim_long |> 
+# considering full time series and all ensemble members
+max_modesim_global <- df_modesim_long |>
+  filter(year < 2000) |> 
   filter(pcwd == max(pcwd))
 
-max_era5 <- df_era5 |> 
+# considering single-member 1850-1900 as reference
+max_modesim_historical <- df_modesim_long |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(member) |> 
+  filter(pcwd == max(pcwd)) |> 
+  ungroup() |>
+  summarise(upper = max(pcwd), lower = min(pcwd))
+
+max_era5_ref <-  df_era5 |> 
+  filter(year %in% 1970:1999) |> 
   filter(pcwd == max(pcwd))
 
-level_recordshattering <- max_modesim$pcwd + 2 * sd(df_modesim_long$pcwd, na.rm = TRUE)
+max_era5_modern <- df_era5 |> 
+  filter(year %in% 2000:2024) |> 
+  filter(pcwd == max(pcwd))
 ```
 
+Considering what fraction of realisations of the 1850-1999 reference does ERA5 2000-2024 contain an uprecedentedly high PCWD?
+```{r}
+df_modesim_long |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(member) |> 
+  filter(pcwd == max(pcwd)) |> 
+  ungroup() |> 
+  mutate(unprec = max_era5_modern$pcwd > pcwd) |> 
+  summarise(n_unprec = sum(unprec), nobs = n()) |> 
+  mutate(frac_unprec = n_unprec / nobs) |> 
+  pull(frac_unprec)
+```
 
 ### Visualise
 
 ```{r}
 ggplot() +
+  geom_rect(aes(xmin = 1850, xmax = 2024, ymin = max_modesim_historical$lower, ymax = max_modesim_historical$upper), fill = "grey") +
   geom_line(aes(year, pcwd, group = member), alpha = 0.1, data = df_modesim_long) +
   geom_line(aes(year, pcwd), color = "tomato", data = df_era5) +
-  geom_point(aes(year, pcwd), alpha = 0.5, size = 2, data = max_modesim) +
-  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5) +
-  geom_hline(yintercept = max_modesim$pcwd, linetype = "dotted", alpha = 0.3) +
-  geom_hline(yintercept = level_recordshattering, linetype = "dotted", alpha = 0.3) +
+  geom_point(aes(year, pcwd), alpha = 0.5, size = 2, data = max_modesim_global) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_modern) +
+  geom_hline(yintercept = max_modesim_global$pcwd, alpha = 0.3) +
+  geom_hline(yintercept = max_era5_ref$pcwd, color = "tomato") +
+  geom_vline(xintercept = 1850, linetype = "dotted", alpha = 0.3) +
+  geom_vline(xintercept = 2000, linetype = "dotted", alpha = 0.3) +
   theme_classic()
 ```
+
+### Conclusion
+
+- 21st century single-year droughts (annual maximum PCWD) lies outside the range of 20th century considering climate reanalysis (red point above red line).
+- 21st century single-year droughts (annual maximum PCWD) lies outside the range of 20th century considering 100% of all individual climate model realisations (red point above grey band).
+- 21st century single-year drought (annual maximum PCWD) does *not* lie outside the range of the multi-centennial large-ensemble reference.
 
 ## 30-year means
 
@@ -82,29 +131,83 @@ df_era5_30 <- df_era5 |>
 
 Determine single maximum in reference
 ```{r}
-max_modesim_30 <- df_modesim_30 |> 
-  filter(pcwd30 == max(pcwd30, na.rm = TRUE))
+# considering full time series and all ensemble members
+max_modesim_global <- df_modesim_30 |>
+  filter(year < 2000) |> 
+  filter(pcwd30 == max(pcwd30, na.rm = TRUE)) |> 
+  slice(1) # xxx note: two members (2 and 12) contain exactly the same pcwd30 maximum - by chance or a problem?
 
-max_era5_30 <- df_era5_30 |> 
+# considering single-member 1850-1900 as reference
+max_modesim_historical <- df_modesim_30 |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(member) |> 
+  filter(pcwd30 == max(pcwd30)) |> 
+  ungroup() |>
+  summarise(upper = max(pcwd30), lower = min(pcwd30))
+
+max_era5_ref <-  df_era5_30 |> 
+  filter(year %in% 1970:1999) |> 
   filter(pcwd == max(pcwd, na.rm = TRUE))
 
-level_recordshattering <- max_modesim_30$pcwd30[1] + 2 * sd(df_modesim_30$pcwd30, na.rm = TRUE)
+max_era5_modern <- df_era5_30 |> 
+  filter(year %in% 2000:2024) |> 
+  filter(pcwd == max(pcwd, na.rm = TRUE))
+```
+
+Considering what fraction of realisations of the 1850-1999 reference does ERA5 2000-2024 contain an uprecedentedly high PCWD?
+```{r}
+df_modesim_30 |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(member) |> 
+  filter(pcwd30 == max(pcwd30)) |> 
+  ungroup() |> 
+  mutate(unprec = max_era5_modern$pcwd > pcwd30) |> 
+  summarise(n_unprec = sum(unprec), nobs = n()) |> 
+  mutate(frac_unprec = n_unprec / nobs) |> 
+  pull(frac_unprec)
 ```
 
 ### Visualise
 
 ```{r}
 ggplot() +
-  geom_line(aes(year, pcwd30, group = member), alpha = 0.3, data = df_modesim_30) +
+  geom_rect(aes(xmin = 1850, xmax = 2024, ymin = max_modesim_historical$lower, ymax = max_modesim_historical$upper), fill = "grey") +
+  geom_line(aes(year, pcwd30, group = member), alpha = 0.1, data = df_modesim_30) +
   geom_line(aes(year, pcwd), color = "tomato", data = df_era5_30) +
-  geom_point(aes(year, pcwd30), alpha = 0.5, size = 2, data = max_modesim_30) +
-  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_30) +
-  geom_hline(yintercept = max_modesim_30$pcwd30, linetype = "dotted", alpha = 0.3) +
-  geom_hline(yintercept = level_recordshattering, linetype = "dotted", alpha = 0.3) +
+  geom_point(aes(year, pcwd30), alpha = 0.5, size = 2, data = max_modesim_global) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_modern) +
+  geom_hline(yintercept = max_modesim_global$pcwd30, alpha = 0.3) +
+  geom_hline(yintercept = max_era5_ref$pcwd, color = "tomato") +
+  geom_vline(xintercept = 1850, linetype = "dotted", alpha = 0.3) +
+  geom_vline(xintercept = 2000, linetype = "dotted", alpha = 0.3) +
   theme_classic()
 ```
 
-## Conclusion
+### Conclusion
 
-- The record annual maximum PCWD in ERA5 is not unprecedented (and not record-shattering).
-- The record 30-year mean of annual maximum PCWD in ERA5 is indeed unprecedented (but not record-shattering).
+- 30-year mean PCWD of 21st century lies outside all references (red point above red line, grey band, and grey line).
+
+## 100-year extreme value
+
+```{r}
+# Function: fit Gumbel with extRemes and estimate T-year return level
+fit_gumbel_return <- function(x, T = 100) {
+  # Fit Gumbel (GEV with shape = 0)
+  fit <- extRemes::fevd(x, type = "Gumbel")
+  
+  # Estimate T-year return level
+  rl <- unname(c(return.level(fit, return.period = T)))
+
+  return(rl)
+}
+```
+
+```{r}
+df_modesim_x100 <- df_modesim |> 
+  mutate(across(ends_with("_tidy"), ~slide_dbl(.x, fit_gumbel_return, .before = 29, .complete = TRUE))) |> 
+  pivot_longer(cols = ends_with("_tidy"), names_to = "member", values_to = "pcwdx30", names_transform = extract_ensemble_number)
+
+df_era5_x100 <- df_era5 |> 
+  mutate(across(pcwd, ~slide_dbl(.x, fit_gumbel_return, .before = 29, .complete = TRUE))) 
+```
+

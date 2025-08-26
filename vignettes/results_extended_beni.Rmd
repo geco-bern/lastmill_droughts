@@ -1,0 +1,518 @@
+---
+title: "Extended results suggestion: Are 21st century droughts unprecedented?"
+author: "Beni Stocker"
+date: "2025-08-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(here)
+library(slider)
+library(extRemes)
+```
+
+## Approach
+
+Determining whether 21st century (2000-2024) droughts are unprecedented and quantifying their "extremeness" depends on the reference. Here, we determine these aspects based on alternative choices of the reference:
+
+1. Recent past climate reanalysis (ERA5) data (1975-1999)
+2. Recent past climate model simulation, across all ensemble members (1975-1999)
+3. Historical climate model simulation, across all ensemble members (1850-1999)
+4. Multi-centennial climate model simulation, across all ensemble members (1420-1999)
+
+The magnitude of 21st century droughts are estimated based on ERA5 climate reanalysis data for years 2000-2024.
+
+## Read data
+
+### ERA5
+
+Interpreting the objects into nice and tidy data frames.
+```{r}
+list_era5 <- read_rds(here("data/regional_results_ERA5Land.rds"))
+
+make_df_era5 <- function(vec){
+  tibble(
+    year = 1970:2024,
+    pcwd = vec
+  )
+}
+
+df_era5 <- purrr::map(
+  list_era5, 
+  ~make_df_era5(.)
+) |> 
+  bind_rows(.id = "region")
+```
+
+### ModE-Sim
+
+```{r}
+extract_ensemble_number <- function(char){
+  char |> 
+    str_remove("_tidy") |> 
+    str_remove("m0") |> 
+    as.integer()
+}
+
+make_df_modesim <- function(df){
+  as_tibble(df) |> 
+    # not sure this is correct. Better to take years forward as part of the workflow. 
+    mutate(year = 1420:2009) |> 
+    pivot_longer(
+      cols = ends_with("_tidy"), 
+      names_to = "member", 
+      values_to = "pcwd", 
+      names_transform = extract_ensemble_number
+      )
+}
+
+list_modesim <- read_rds(here("data/regional_results_ModESim_bc.rds"))
+
+df_modesim <- purrr::map(
+  list_modesim,
+  ~make_df_modesim(.)
+) |> 
+  bind_rows(.id = "region")
+```
+
+
+## Record annual values
+
+Create objects that contain records for different references in different datasets.
+
+### ERA5
+
+1. ERA5: Record PCWD by region in years 1975-1999 and in years 2000-2024.
+```{r}
+df_record_era5 <- df_era5 |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+tmp <- df_record_era5 |> 
+  mutate(is_greater = pcwd_max0 < pcwd_max1)
+
+n_greater <- tmp |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg1 <- tmp |> 
+  ggplot(aes(pcwd_max0, pcwd_max1, color = is_greater)) +
+  geom_point(size = 0.75, show.legend = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ERA5 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "Record annual PCWD"
+  )
+
+gg1
+```
+
+### ModE-Sim recent (1975-1999)
+
+Record PCWD by region in ERA5, years 2000-2024 vs. in years 1975-1999 and all ensemble members in ModE-Sim.
+```{r}
+df_record_era5_modesim_recent <- df_modesim |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region, member) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+tmp <- df_record_era5_modesim_recent |> 
+  mutate(is_greater = pcwd_max0_right < pcwd_max1)
+
+n_greater <- tmp |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg2 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_left, xend = pcwd_max0_right, y = pcwd_max1, color = is_greater)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg2
+```
+
+### ModE-Sim historical (1850-1999)
+
+Record PCWD by region in ERA5, years 2000-2024 vs. in years 1850-1999 and all ensemble members in ModE-Sim.
+```{r}
+df_record_era5_modesim_historical <- df_modesim |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(region, member) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+tmp <- df_record_era5_modesim_historical |> 
+  mutate(is_greater = pcwd_max0_right < pcwd_max1)
+
+n_greater <- tmp |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg3 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_left, xend = pcwd_max0_right, y = pcwd_max1, color = is_greater)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1850-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg3
+```
+
+### ModE-Sim multi-century (1420-1999)
+
+Record PCWD by region in ERA5, years 2000-2024 vs. in years 1850-1999 and all ensemble members in ModE-Sim.
+```{r}
+df_record_era5_modesim_multicent <- df_modesim |> 
+  filter(year %in% 1420:1999) |> 
+  group_by(region, member) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+tmp <- df_record_era5_modesim_multicent |> 
+  mutate(is_greater = pcwd_max0_right < pcwd_max1)
+
+n_greater <- tmp |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg4 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_left, xend = pcwd_max0_right, y = pcwd_max1, color = is_greater)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1420-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg4
+```
+
+### Combined plot
+
+```{r}
+cowplot::plot_grid(
+  gg1, gg2, gg3, gg4, 
+  nrow = 1, 
+  align = "v",
+  labels = letters[1:4]
+  )
+ggsave(here("fig/annual_records_references.pdf"), width = 15, height = 4)
+```
+
+## Record 25-year means
+
+Calculate rolling means of all data, separated by region (ModE-Sim also separated by ensemble member).
+```{r}
+df_era5_25 <- df_era5 |> 
+  pivot_wider(values_from = "pcwd", names_from = "region") |> 
+  mutate(across(-year, ~slide_dbl(.x, mean, .before = 24, .complete = TRUE)))
+
+df_modesim_25 <- df_modesim |> 
+  group_by(region, member) |> 
+  nest() |> 
+  mutate(
+    data = map(data, ~ .x  |> 
+      mutate(
+        roll_mean = slide_dbl(
+          .x$pcwd,
+          mean,
+          .before = 24,     # 2 before = 3-point window (includes current)
+          .complete = TRUE  # require full window, so first 2 will be NA
+        )
+      )
+    )
+  )
+```
+
+### ERA5
+
+```{r}
+df_record25_era5 <- df_era5_25 |> 
+  filter(year %in% c(1999, 2024)) |> 
+  pivot_longer(cols = -year, values_to = "pcwd", names_to = "region") |> 
+  pivot_wider(values_from = "pcwd", names_from = "year") |> 
+  rename(pcwd_max0 = "1999", pcwd_max1 = "2024")
+```
+
+Plot.
+```{r}
+tmp <- df_record25_era5 |> 
+  mutate(is_greater = pcwd_max0 < pcwd_max1)
+
+n_greater <- tmp |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg1 <- tmp |> 
+  ggplot(aes(pcwd_max0, pcwd_max1, color = is_greater)) +
+  geom_point(size = 0.75, show.legend = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ERA5 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "Record 25-year mean PCWD"
+  )
+
+gg1
+```
+
+### ModE-Sim recent (1975-1999)
+
+```{r}
+get_record <- function(df){
+  df |> 
+    filter(year %in% 1975:1999) |> 
+    filter(roll_mean == max(roll_mean)) |> 
+    pull(roll_mean)
+}
+
+df_record25_era5_modesim_recent <- df_modesim_25 |> 
+  mutate(pcwd_max0 = purrr::map_dbl(data, ~get_record(.))) |> 
+  select(-data) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_record25_era5 |> 
+      select(region, pcwd_max1),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+tmp <- df_record25_era5_modesim_recent |> 
+  mutate(is_greater = pcwd_max0_right < pcwd_max1)
+
+n_greater <- tmp |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg2 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = is_greater)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg2
+```
+
+### ModE-Sim historical (1850-1999)
+
+```{r}
+get_record <- function(df){
+  df |> 
+    filter(year %in% 1850:1999) |> 
+    filter(roll_mean == max(roll_mean)) |> 
+    pull(roll_mean)
+}
+
+df_record25_era5_modesim_historical <- df_modesim_25 |> 
+  mutate(pcwd_max0 = purrr::map_dbl(data, ~get_record(.))) |> 
+  select(-data) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_record25_era5 |> 
+      select(region, pcwd_max1),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+tmp <- df_record25_era5_modesim_historical |> 
+  mutate(is_greater = pcwd_max0_right < pcwd_max1)
+
+n_greater <- tmp |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg3 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = is_greater)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg3
+```
+
+### ModE-Sim multi-century (1420-1999)
+
+```{r}
+get_record <- function(df){
+  df |> 
+    filter(year %in% 1420:1999) |> 
+    filter(roll_mean == max(roll_mean, na.rm = TRUE)) |> 
+    pull(roll_mean)
+}
+
+df_record25_era5_modesim_multicent <- df_modesim_25 |> 
+  mutate(pcwd_max0 = purrr::map_dbl(data, ~get_record(.))) |> 
+  select(-data) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_record25_era5 |> 
+      select(region, pcwd_max1),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+tmp <- df_record25_era5_modesim_multicent |> 
+  mutate(is_greater = pcwd_max0_right < pcwd_max1)
+
+n_greater <- tmp |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg4 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = is_greater)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg4
+```
+
+### Combined plot
+
+```{r}
+cowplot::plot_grid(
+  gg1, gg2, gg3, gg4, 
+  nrow = 1, 
+  align = "v",
+  labels = letters[1:4]
+  )
+ggsave(here("fig/30yrmeans_records_references.pdf"), width = 15, height = 4)
+```
