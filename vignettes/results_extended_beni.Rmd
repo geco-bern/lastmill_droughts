@@ -23,7 +23,7 @@ Determining whether 21st century (2000-2024) droughts are unprecedented and quan
 1. Recent past climate reanalysis (ERA5) data (1975-1999)
 2. Recent past climate model simulation, across all ensemble members (1975-1999)
 3. Historical climate model simulation, across all ensemble members (1850-1999)
-4. Multi-centennial climate model simulation, across all ensemble members (1420-1999)
+4. Multi-centennial preindustrial climate model simulation, across all ensemble members (1420-1999)
 
 The magnitude of 21st century droughts are estimated based on ERA5 climate reanalysis data for years 2000-2024.
 
@@ -282,13 +282,13 @@ gg4
 ### Combined plot
 
 ```{r}
-cowplot::plot_grid(
+row1 <- cowplot::plot_grid(
   gg1, gg2, gg3, gg4, 
   nrow = 1, 
   align = "v",
   labels = letters[1:4]
   )
-ggsave(here("fig/annual_records_references.pdf"), width = 15, height = 4)
+ggsave(here("fig/annual_records_references.pdf"), plot = row1, width = 15, height = 4)
 ```
 
 ## Record 25-year means
@@ -501,7 +501,7 @@ gg8 <- tmp |>
   scale_x_log10() +
   scale_y_log10() +
   labs(
-    x = "ModE-Sim 1975-1999 (mm)",
+    x = "ModE-Sim 1420-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
     subtitle = bquote(italic(N) == .(n_greater)),
     title = "   "
@@ -513,26 +513,26 @@ gg8
 ### Combined plot
 
 ```{r}
-cowplot::plot_grid(
+row2 <- cowplot::plot_grid(
   gg5, gg6, gg7, gg8, 
   nrow = 1, 
   align = "v",
-  labels = letters[1:4]
+  labels = letters[5:8]
   )
-ggsave(here("fig/30yrmeans_records_references.pdf"), width = 15, height = 4)
+ggsave(here("fig/30yrmeans_records_references.pdf"), plot = row2, width = 15, height = 4)
 ```
 
-## 30-year extremes
+## 30-year extremes (sliding)
 
 Calculate rolling 30-year extremes of all data, separated by region (ModE-Sim also separated by ensemble member).
 ```{r}
-# Function: fit Gumbel with extRemes and estimate T-year return level
-fit_gumbel_return <- function(x, T = 30) {
+# Function: fit Gumbel with extRemes and estimate given year return level
+fit_gumbel_return <- function(vec, return_period = 30) {
   # Fit Gumbel (GEV with shape = 0)
-  fit <- extRemes::fevd(x, type = "Gumbel")
+  fit <- extRemes::fevd(vec, type = "Gumbel")
   
   # Estimate T-year return level
-  rl <- unname(c(return.level(fit, return.period = T)))
+  rl <- unname(c(return.level(fit, return.period = return_period)))
 
   return(rl)
 }
@@ -541,6 +541,32 @@ calc_30x <- function(df){
   fit_gumbel_return(df$pcwd)
 }
 
+calc_30x_across_members <- function(df){
+  # Collapse selected columns into vector
+  vec <- unlist(df %>% select(-year))
+  vec <- vec[is.finite(vec)]
+  fit_gumbel_return(vec, return_period = 30)
+}
+
+apply_sliding <- function(df){
+  df %>%
+    mutate(return_level = slide_index_dbl(
+      seq_len(nrow(.)),
+      .i = year,
+      .before = 24,
+      .complete = TRUE,
+      .f = ~ calc_30x_across_members(df[.x, ])
+    ))
+}
+
+apply_pooled <- function(df, years){
+  df |> 
+    filter(year %in% years) |> 
+    calc_30x_across_members()
+}
+
+# fit two extreme value distributions on the two ERA5 periods and extract the 
+# 30-year extreme value.
 df_era5_30x <- df_era5 |> 
   mutate(period = ifelse(year %in% 1975:1999, "pcwd_x30_ref0", ifelse(year %in% 2000:2024, "pcwd_x30_ref1", NA))) |> 
   group_by(region, period) |> 
@@ -550,36 +576,48 @@ df_era5_30x <- df_era5 |>
   pivot_wider(id_cols = -data, values_from = "pcwd_30x", names_from = "period")
 
 # this takes long to compute
-df_modesim_30x <- df_modesim |> 
+nmembers <- length(unique(df_modesim$member))
+
+# fit extreme value distributions on sliding windows of 25 years, gathering values from all ensemble members
+# warning: this takes a few minutes
+df_modesim_30x_sliding <- df_modesim |> 
+  mutate(member = paste0("m", as.integer(member))) |> 
+  pivot_wider(names_from = "member", values_from = "pcwd") |> 
   group_by(region) |> 
   nest() |> 
-  mutate(
-    data = map(data, ~ .x  |> 
-      arrange(year) |> 
-      mutate(
-        roll_mean = slide_dbl(
-          .x$pcwd,
-          fit_gumbel_return,
-          .before = 24 * nregions,     # 2 before = 3-point window (includes current)
-          .complete = TRUE  # require full window, so first 2 will be NA
-        )
-      )
-    )
-  )
+  mutate(data = map(data, apply_sliding)) |> 
+  mutate(data = map(data, ~select(., year, pcwd_30x = return_level))) |> 
+  unnest(data)
+
+# fit extreme value distributions on data pooled from all years in different periods
+df_modesim_30x_pooled <- df_modesim |> 
+  mutate(member = paste0("m", as.integer(member))) |> 
+  pivot_wider(names_from = "member", values_from = "pcwd") |> 
+  group_by(region) |> 
+  nest()
+  
+df_modesim_30x_pooled_multicent <- df_modesim_30x_pooled |> 
+  mutate(pcwd_30x = map_dbl(data, ~apply_pooled(., years = 1420:1999)))
+
+df_modesim_30x_pooled_historical <- df_modesim_30x_pooled |> 
+  mutate(pcwd_30x = map_dbl(data, ~apply_pooled(., years = 1850:1999)))
+
+df_modesim_30x_pooled_recent <- df_modesim_30x_pooled |> 
+  mutate(pcwd_30x = map_dbl(data, ~apply_pooled(., years = 1975:1999)))
 ```
 
 ### ERA5
 
-Plot.
 ```{r}
 tmp <- df_era5_30x |> 
   mutate(is_greater = pcwd_x30_ref0 < pcwd_x30_ref1)
 
 n_greater <- tmp |> 
+  ungroup() |> 
   summarise(n_greater = sum(is_greater)) |> 
   pull(n_greater)
 
-gg5 <- tmp |> 
+gg9 <- tmp |> 
   ggplot(aes(pcwd_x30_ref0, pcwd_x30_ref1, color = is_greater)) +
   geom_point(size = 0.75, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
@@ -595,5 +633,320 @@ gg5 <- tmp |>
     title = "30-year extreme PCWD"
   )
 
-gg5
+gg9
 ```
+
+### ModE-Sim recent (1975-1999)
+
+```{r}
+get_minmax <- function(df){
+  df |> 
+    filter(year %in% 1975:1999) |> 
+    ungroup() |> 
+    summarise(pcwd_30x_ref0_max = max(pcwd_30x, na.rm = TRUE), pcwd_30x_ref0_min = min(pcwd_30x, na.rm = TRUE))
+}
+
+df_30x_sliding_recent <- df_modesim_30x_sliding |> 
+  group_by(region) |> 
+  nest() |> 
+  mutate(data = purrr::map(data, ~get_minmax(.))) |> 
+  unnest(data) |> 
+  left_join(
+    df_era5_30x |> 
+      select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+
+```{r}
+tmp <- df_30x_sliding_recent |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_30x_ref0_max)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg10 <- tmp |> 
+  ggplot(aes(x = pcwd_30x_ref0_max, xend = pcwd_30x_ref0_min, y = pcwd_x30_ref1, color = is_greater)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg10
+```
+
+### ModE-Sim historical (1850-1999)
+
+```{r}
+get_minmax <- function(df){
+  df |> 
+    filter(year %in% 1850:1999) |> 
+    ungroup() |> 
+    summarise(pcwd_30x_ref0_max = max(pcwd_30x, na.rm = TRUE), pcwd_30x_ref0_min = min(pcwd_30x, na.rm = TRUE))
+}
+
+df_30x_sliding_historical <- df_modesim_30x_sliding |> 
+  group_by(region) |> 
+  nest() |> 
+  mutate(data = purrr::map(data, ~get_minmax(.))) |> 
+  unnest(data) |> 
+  left_join(
+    df_era5_30x |> 
+      select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+
+```{r}
+tmp <- df_30x_sliding_historical |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_30x_ref0_max)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg11 <- tmp |> 
+  ggplot(aes(x = pcwd_30x_ref0_max, xend = pcwd_30x_ref0_min, y = pcwd_x30_ref1, color = is_greater)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1850-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg11
+```
+
+### ModE-Sim multi-century (1420-1999)
+
+```{r}
+get_minmax <- function(df){
+  df |> 
+    filter(year %in% 1420:1999) |> 
+    ungroup() |> 
+    summarise(pcwd_30x_ref0_max = max(pcwd_30x, na.rm = TRUE), pcwd_30x_ref0_min = min(pcwd_30x, na.rm = TRUE))
+}
+
+df_30x_sliding_multicent <- df_modesim_30x_sliding |> 
+  group_by(region) |> 
+  nest() |> 
+  mutate(data = purrr::map(data, ~get_minmax(.))) |> 
+  unnest(data) |> 
+  left_join(
+    df_era5_30x |> 
+      select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+
+```{r}
+tmp <- df_30x_sliding_multicent |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_30x_ref0_max)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg12 <- tmp |> 
+  ggplot(aes(x = pcwd_30x_ref0_max, xend = pcwd_30x_ref0_min, y = pcwd_x30_ref1, color = is_greater)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1850-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg12
+```
+
+### Combined plot
+
+```{r}
+row3 <- cowplot::plot_grid(
+  gg9, gg10, gg11, gg12,
+  nrow = 1, 
+  align = "v",
+  labels = letters[9:12]
+  )
+ggsave(here("fig/30yextremes_records_references.pdf"), plot = row3, width = 15, height = 4)
+```
+
+## 30-year extremes (pooled)
+
+### ModE-Sim recent (1975-1999)
+
+```{r}
+df_30x_pooled_recent <- df_modesim_30x_pooled_recent |> 
+  select(-data, pcwd_x30_ref0 = pcwd_30x) |> 
+  left_join(
+    df_era5_30x |> 
+      select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+```{r}
+tmp <- df_30x_pooled_recent |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg13 <- tmp |> 
+  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = is_greater)) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg13
+```
+
+### ModE-Sim historical (1850-1999)
+
+```{r}
+df_30x_pooled_historical <- df_modesim_30x_pooled_historical |> 
+  select(-data, pcwd_x30_ref0 = pcwd_30x) |> 
+  left_join(
+    df_era5_30x |> 
+      select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+```{r}
+tmp <- df_30x_pooled_historical |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg14 <- tmp |> 
+  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = is_greater)) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1850-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg14
+```
+
+### ModE-Sim multi-century (1420-1999)
+
+```{r}
+df_30x_pooled_multicent <- df_modesim_30x_pooled_multicent |> 
+  select(-data, pcwd_x30_ref0 = pcwd_30x) |> 
+  left_join(
+    df_era5_30x |> 
+      select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+```{r}
+tmp <- df_30x_pooled_multicent |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg15 <- tmp |> 
+  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = is_greater)) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("grey30", "tomato")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1420-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N) == .(n_greater)),
+    title = "   "
+  )
+
+gg15
+```
+
+### Combined plot
+
+```{r}
+row4 <- cowplot::plot_grid(
+  gg9, gg13, gg14, gg15,
+  nrow = 1, 
+  align = "v",
+  labels = letters[9:12]
+  )
+ggsave(here("fig/30yextremes_pooled_records_references.pdf"), plot = row4, width = 15, height = 4)
+```
+
+
+## All combined plot
+
+```{r}
+gg_combined <- cowplot::plot_grid(
+  row1, row4,
+  nrow = 2
+  )
+ggsave(here("fig/combined_references.pdf"), plot = gg_combined, width = 15, height = 8)
+```
+
+
