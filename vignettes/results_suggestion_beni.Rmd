@@ -183,17 +183,15 @@ ggplot() +
   theme_classic()
 ```
 
-### Conclusion
+## 30-year extreme value
 
-- 30-year mean PCWD of 21st century lies outside all references (red point above red line, grey band, and grey line).
-
-## 100-year extreme value
+Could also use a 5-year extreme value.
 
 ```{r}
 # Function: fit Gumbel with extRemes and estimate T-year return level
-fit_gumbel_return <- function(x, T = 100) {
+fit_gumbel_return <- function(x, T = 30) {
   # Fit Gumbel (GEV with shape = 0)
-  fit <- extRemes::fevd(x, type = "Gumbel")
+  fit <- fevd(x, type = "Gumbel")
   
   # Estimate T-year return level
   rl <- unname(c(return.level(fit, return.period = T)))
@@ -202,12 +200,42 @@ fit_gumbel_return <- function(x, T = 100) {
 }
 ```
 
+
 ```{r}
-df_modesim_x100 <- df_modesim |> 
+df_modesim_x30 <- df_modesim |> 
   mutate(across(ends_with("_tidy"), ~slide_dbl(.x, fit_gumbel_return, .before = 29, .complete = TRUE))) |> 
   pivot_longer(cols = ends_with("_tidy"), names_to = "member", values_to = "pcwdx30", names_transform = extract_ensemble_number)
 
-df_era5_x100 <- df_era5 |> 
+df_era5_x30 <- df_era5 |> 
   mutate(across(pcwd, ~slide_dbl(.x, fit_gumbel_return, .before = 29, .complete = TRUE))) 
 ```
 
+Determine single maximum in reference
+```{r}
+max_modesim_x30 <- df_modesim_x30 |> 
+  filter(pcwdx30 == max(pcwdx30, na.rm = TRUE))
+
+max_era5_x30 <- df_era5_x30 |> 
+  filter(pcwd == max(pcwd, na.rm = TRUE))
+
+level_recordshattering <- max_modesim_x30$pcwdx30 + 2 * sd(df_modesim_x30$pcwdx30, na.rm = TRUE)
+```
+
+### Visualise
+
+```{r}
+ggplot() +
+  geom_line(aes(year, pcwdx30, group = member), alpha = 0.3, data = df_modesim_x30) +
+  geom_line(aes(year, pcwd), color = "tomato", data = df_era5_x30) +
+  geom_point(aes(year, pcwdx30), alpha = 0.5, size = 2, data = max_modesim_x30) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_30) +
+  geom_hline(yintercept = max_modesim_x30$pcwdx30, linetype = "dotted", alpha = 0.3) +
+  geom_hline(yintercept = level_recordshattering, linetype = "dotted", alpha = 0.3) +
+  theme_classic()
+```
+
+## Conclusion
+
+- The record annual maximum PCWD in ERA5 is not unprecedented (and not record-shattering).
+- The record 30-year mean of annual maximum PCWD in ERA5 is indeed unprecedented (but not record-shattering).
+- The highest 30-year extreme, estimated from 30-year rolling windows is (just slighly) unprecedented (but not record-shattering).
