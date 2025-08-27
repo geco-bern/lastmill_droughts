@@ -228,7 +228,7 @@ ggplot() +
   geom_line(aes(year, pcwdx30, group = member), alpha = 0.3, data = df_modesim_x30) +
   geom_line(aes(year, pcwd), color = "tomato", data = df_era5_x30) +
   geom_point(aes(year, pcwdx30), alpha = 0.5, size = 2, data = max_modesim_x30) +
-  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_30) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_x30) +
   geom_hline(yintercept = max_modesim_x30$pcwdx30, linetype = "dotted", alpha = 0.3) +
   geom_hline(yintercept = level_recordshattering, linetype = "dotted", alpha = 0.3) +
   theme_classic()
