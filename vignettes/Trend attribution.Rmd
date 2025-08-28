@@ -1,0 +1,1342 @@
+---
+title: "Trend attribution"
+author: "Patricia Helpap"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, echo=FALSE}
+library(readr)
+library(dplyr)
+library(here)
+library(lubridate)
+library(patchwork)
+library(extRemes)
+library(ggplot2)
+library(cwd)
+library(ncdf4)
+library(reshape2)
+library(ggpubr)
+library(maps)
+library(terra)
+library(rnaturalearth)
+library(sf)
+library(rgdal)
+library(sp)
+library(RColorBrewer)
+library(rJava)
+library(loadeR.java)
+library(transformeR)
+library(loadeR)
+library(visualizeR)
+library(geoprocessoR)
+library(tidyverse)
+library(abind)
+library(cowplot)
+library(gridExtra)
+library(scales)
+```
+
+- Jump to code line 273 for trend attribution - 
+
+### PCWD len parameter
+Start with analysis of the 'len' variable that describes the length of PCWD events
+
+One ensemble member, one grid cell, 100 years: 
+```{r}
+#Data for code chunk stored on Ubelix server
+
+# #read in an rds file from one ensemble member that contains daily PCWD and len: 
+# pcwd <- readRDS("/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m008_tidy/02_pcwd_1850/ModESim_pcwd_LON_-138.750.rds")
+
+#era5-land data: 
+pcwd <- readRDS("/storage/research/giub_geco/data_2/scratch/phelpap/ERA5Land_1950-2024/02_pcwd/ERA5Land_pcwd_LON_+003.750.rds")
+
+#filter to contain only one lon and lat i.e. one grid cell 
+gridcell <- pcwd %>%
+  filter(abs(lat - 47.563926) < 1e-6) #somewhere in France
+
+gridcell_data <- gridcell$data[[1]]
+
+#constrain to first 100 years: 
+# Extract data from the gridcell
+inst_data <- gridcell_data$inst
+df_data <- gridcell_data$df
+
+# # Filter to first 100 years (1420–1519)
+# inst_data_100yr <- inst_data %>%
+#   filter(date_start < as.Date("1950-01-01"))
+# 
+# df_data_100yr <- df_data %>%
+#   filter(date < as.Date("1950-01-01"))
+# 
+# gridcell_data_100yr <- list(inst = inst_data_100yr, df = df_data_100yr)
+
+
+```
+
+Plot daily pcwd and events for the first 100 years:
+```{r}
+ggplot() +
+  geom_rect(
+    data = gridcell_data$inst,
+    aes(xmin = date_start, xmax = date_end, ymin = 0, ymax = max( gridcell_data$df$deficit)), 
+    fill = rgb(0,0,0,0.3),
+    color = NA) +
+  geom_line(data  =  gridcell_data$df, aes(date, deficit), color = "tomato") +
+  theme_classic() +
+  ylim(0, max(gridcell_data$df$deficit)) + 
+  labs(
+    x = "Date", 
+    y = "Potential cumulative water deficit (mm)"
+    )
+
+
+```
+
+Plot the length of PCWD events: 
+```{r}
+ggplot() +
+  geom_line(data  =  gridcell_data$inst, aes(date_start, len), color = "blue") +
+  theme_classic() +
+  ylim(0, max(gridcell_data$inst$len)) + 
+  labs(
+    x = "Start date of PCWD event", 
+    y = "Length of PCWD events (days)"
+    )
+```
+
+Now Plot the maximum PCWD events and the corresponding length of PCWD events 
+
+```{r}
+#extract maximum PCWD event
+pcwd_max_100yr <- df_data_100yr |>
+    mutate(year = lubridate::year(date)) |>
+    group_by(year) |>
+    summarise(max_deficit = max(deficit, na.rm = TRUE))
+
+
+
+#extract length at maximum PCWD event
+len_max_100yr <- inst_data_100yr |>
+    mutate(year = lubridate::year(date_start)) |>
+    group_by(year) |>
+    summarise(max_len = max(len, na.rm = TRUE))  # Select only the relevant columns
+
+
+plot_data <- left_join(pcwd_max_100yr, len_max_100yr, by = "year")
+
+
+```
+
+Plot on shared plot
+```{r}
+#find suitable scaling factor
+range(plot_data$max_deficit)  # e.g., ~[100, 200]
+range(plot_data$max_len)      # e.g., ~[30, 100]
+
+scale_factor <- 3
+
+ggplot(plot_data, aes(x = year)) +
+  geom_line(aes(y = max_deficit, color = "Max pcwd (mm)"), size = 1) +
+  geom_line(aes(y = max_len * scale_factor, color = "Length of max pcwd event (days)"), size = 1, linetype = "dashed") +
+  scale_y_continuous(
+    name = "Max pcwd (mm)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Length of max pcwd event (days)")
+  ) +
+  scale_color_manual(values = c("Max pcwd (mm)" = "steelblue", "Length of max pcwd event (days)" = "darkred")) +
+  theme_minimal() +
+  theme(
+    axis.title.y.left = element_text(color = "steelblue"),
+    axis.title.y.right = element_text(color = "darkred"),
+    legend.title = element_blank(),
+    legend.position = "top"
+  ) +
+  labs(
+    title = "Max PWCD vs Event Length (1420–1519)",
+    x = "Year"
+  )
+
+
+```
+
+
+Do the same for the full 431 years: 
+
+```{r}
+#extract maximum PCWD event
+pcwd_max <- df_data |>
+    mutate(year = lubridate::year(date)) |>
+    group_by(year) |>
+    summarise(max_deficit = max(deficit, na.rm = TRUE))
+
+
+
+#extract length at maximum PCWD event
+len_max <- inst_data |>
+    mutate(year = lubridate::year(date_start)) |>
+    group_by(year) |>
+    summarise(max_len = max(len, na.rm = TRUE))  # Select only the relevant columns
+
+
+plot_data2 <- left_join(pcwd_max, len_max, by = "year")
+
+```
+
+Plot on shared plot
+```{r}
+#find suitable scaling factor
+range(plot_data2$max_deficit)  # e.g., ~[100, 200]
+range(plot_data2$max_len)      # e.g., ~[30, 100]
+
+scale_factor <- 3
+
+ggplot(plot_data2, aes(x = year)) +
+  geom_line(aes(y = max_deficit, color = "Max pcwd (mm)"), size = 1) +
+  geom_line(aes(y = max_len * scale_factor, color = "Length of max pcwd event (days)"), size = 1, linetype = "dashed") +
+  scale_y_continuous(
+    name = "Max pcwd (mm)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Length of max pcwd event (days)")
+  ) +
+  scale_color_manual(values = c("Max pcwd (mm)" = "steelblue", "Length of max pcwd event (days)" = "darkred")) +
+  theme_minimal() +
+  theme(
+    axis.title.y.left = element_text(color = "steelblue"),
+    axis.title.y.right = element_text(color = "darkred"),
+    legend.title = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(
+    title = "Max PWCD vs Event Length (1420–1850)",
+    x = "Year"
+  )
+
+
+```
+
+
+Calculate correlation between 
+a) pcwd and len 
+b) max pcwd and len of max pcwd
+
+```{r}
+#daily pcwd and length:
+
+correlation_daily <- cor(inst_data$deficit, inst_data$len, method = "spearman")
+print(correlation_daily)
+
+ggplot(inst_data, aes(x = len, y = deficit)) +
+  geom_point(color = "darkblue") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  theme_minimal() +
+  labs(
+    title = "Correlation Between PCWD and Event Length",
+    x = "Length (days)",
+    y = "PCWD (mm)"
+  )
+
+cor_test_result_daily <- cor.test(inst_data$deficit,inst_data$len, method = "spearman")
+print(cor_test_result_daily)
+
+```
+
+
+
+```{r}
+#maximum pcwd and length of max pcwd:
+
+correlation_max <- cor(plot_data2$max_deficit, plot_data2$max_len, method = "spearman")
+print(correlation_max)
+
+ggplot(plot_data2, aes(x = max_len, y = max_deficit)) +
+  geom_point(color = "darkblue") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  theme_minimal() +
+  labs(
+    title = "Correlation Between PCWD Max Deficit and Event Length",
+    x = "Max Length (days)",
+    y = "Max PCWD (mm)"
+  )
+
+cor_test_result <- cor.test(plot_data2$max_deficit, plot_data2$max_len, method = "spearman")
+print(cor_test_result)
+
+
+
+```
+
+
+## Trend attribution of forced PCWD trends over 600 years
+
+First read in data and calculate ensemble mean with stitched together 600 years for 
+1) Annual maximum PCWD 
+2) Annual total precipitation
+3) Annual total PET
+4) Length of annual maximum PCWD event 
+
+
+Read in lat, lon and time info: 
+```{r}
+#lat lon and time info from netcdf files
+##read in data
+input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
+input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
+
+nc_pwcd_1850 <- nc_open(input_file_1850)
+pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")
+lon = ncvar_get(nc_pwcd_1850, varid="lon")
+lat = ncvar_get(nc_pwcd_1850, varid="lat")
+time_1850 = ncvar_get(nc_pwcd_1850, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_1850 <- reference_date + time_1850
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1850)
+
+#1420 file for 1420 time
+nc_pwcd_1420 <- nc_open(input_file_1420)
+pcwd_annmax_1420 = ncvar_get(nc_pwcd_1420, varid="pcwd_annmax")
+time_1420 = ncvar_get(nc_pwcd_1420, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+time_dates_1420 <- reference_date + time_1420
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1420)
+```
+
+
+Start with PCWD: 
+
+Aggregate all 1850 files: 
+```{r}
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "04_result_1850/PCWD_ANNMAX.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# 
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1850 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+# dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+# dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1850[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1850))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+
+Aggregate all 1420 files: 
+
+```{r}
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "04_result_1420/PCWD_ANNMAX.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# target_files <- target_files[-1] #remove m001 file
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# ensemble_members <- ensemble_members[-1]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1420 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+# dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+# dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1420[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1420))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+Calculate ensemble means and merge both sets
+
+```{r}
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# PCWD_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(PCWD_EM_1850)
+# 
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# PCWD_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(PCWD_EM_1420)
+# 
+# # Load abind package
+# library(abind)
+# 
+# # Merge along the 3rd dimension (time)
+# PCWD_EM_merged <- abind(PCWD_EM_1420, PCWD_EM_1850, along = 3)
+# time_merged <-abind(time_1420, time_1850)
+# # Convert to actual dates (days since 2001-01-01)
+# reference_date <- as.Date("2001-01-01")
+# time_dates_merged <- reference_date + time_merged
+```
+apply land masking
+```{r}
+# #apply land mask to both ModE-Sim and ERA5-Land to make sure those areas are not bias corrected
+# # Step 1: Create a land-sea mask from the natural earth dataset
+# land <- ne_countries(scale = "medium", returnclass = "sf")
+# land <- st_transform(land, crs = "+proj=longlat +datum=WGS84")
+# 
+# # Step 2: Create a grid with the same lon/lat as gini_values_1850
+# grid_df <- expand.grid(lon = lon, lat = lat)
+# 
+# # Step 3: Check which grid cells are land or ocean based on the land polygons
+# grid_sf <- st_as_sf(grid_df, coords = c("lon", "lat"), crs = st_crs(land))
+# 
+# # Step 4: Use `st_intersects` to check if each grid cell is land (1) or ocean (0)
+# grid_sf$in_land <- st_intersects(grid_sf, land, sparse = FALSE) %>% rowSums() > 0  # TRUE for land, FALSE for ocean
+# 
+# # Step 5: Create a land-sea mask based on the land check and ensure correct dimensions
+# land_sea_mask <- matrix(grid_sf$in_land, nrow = 192, ncol = 96, byrow = FALSE)  # Corrected: 192 longitudes, 96 latitudes
+# 
+# apply_land_mask <- function(grid_data, slm) {
+#   # grid_data: 3D array [lon, lat, time]
+#   # slm:    2D logical matrix [lon, lat] TRUE=land, FALSE=ocean
+# 
+#   # Make a copy
+#   masked_array <- grid_data
+# 
+#   # Number of time steps
+#   nt <- dim(grid_data)[3]
+# 
+#   for (t in seq_len(nt)) {
+#     # grab the lon×lat slice at time t
+#     slice <- masked_array[ , , t]
+#     # set ocean cells to NA
+#     slice[!slm] <- NA
+#     # put it back
+#     masked_array[ , , t] <- slice
+#   }
+# 
+#   return(masked_array)
+# }
+# 
+# # Apply land-sea mask 
+# PCWD_EM_merged_masked <- apply_land_mask(PCWD_EM_merged, land_sea_mask)
+
+# #save masked PCWD ensemble mean data 
+# saveRDS(PCWD_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/PCWD_EM_masked_600yr.rds")
+PCWD_EM_merged_masked <- readRDS(here("data/PCWD_EM_masked_600yr.rds"))
+
+```
+
+
+Repeat for total precipitation: 
+```{r}
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "Collected_Total_P_1850/Total_P.nc") 
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# 
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1850 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "total_precip"))[1]
+# dim_y <- dim(ncvar_get(nc, "total_precip"))[2]
+# dim_z <- dim(ncvar_get(nc, "total_precip"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "total_precip")  # Adjust "tot_precip" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1850[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1850))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+
+Aggregate all 1420 files: 
+
+```{r}
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "Collected_Total_P_1420/Total_P.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# target_files <- target_files[-1] #remove m001 file
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# ensemble_members <- ensemble_members[-1]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1420 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "total_precip"))[1]
+# dim_y <- dim(ncvar_get(nc, "total_precip"))[2]
+# dim_z <- dim(ncvar_get(nc, "total_precip"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "total_precip")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1420[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1420))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+Calculate ensemble means and merge both sets
+
+```{r}
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# P_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(P_EM_1850)
+# 
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# P_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
+# dim(P_EM_1420)
+# 
+# # Load abind package
+# library(abind)
+# 
+# # Merge along the 3rd dimension (time)
+# P_EM_merged <- abind(P_EM_1420, P_EM_1850, along = 3)
+```
+
+apply land masking
+```{r}
+# # Apply land-sea mask 
+# P_EM_merged_masked <- apply_land_mask(P_EM_merged, land_sea_mask)
+# 
+# # #save masked Precip ensemble mean data 
+# saveRDS(P_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/P_EM_masked_600yr.rds")
+P_EM_merged_masked <- readRDS(here("data/P_EM_masked_600yr.rds"))
+
+
+```
+
+
+Repeat for PET: 
+```{r}
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "Collected_Total_PET_1850/Total_PET.nc") 
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# 
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1850 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "total_pet"))[1]
+# dim_y <- dim(ncvar_get(nc, "total_pet"))[2]
+# dim_z <- dim(ncvar_get(nc, "total_pet"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "total_pet")  # Adjust "tot_precip" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1850[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1850))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+
+Aggregate all 1420 files: 
+
+```{r}
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "Collected_Total_PET_1420/Total_PET.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# target_files <- target_files[-1] #remove m001 file
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# ensemble_members <- ensemble_members[-1]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1420 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "total_pet"))[1]
+# dim_y <- dim(ncvar_get(nc, "total_pet"))[2]
+# dim_z <- dim(ncvar_get(nc, "total_pet"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "total_pet")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1420[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1420))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+Calculate ensemble means and merge both sets
+
+```{r}
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# PET_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(PET_EM_1850)
+# 
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# PET_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
+# dim(PET_EM_1420)
+# 
+# # Load abind package
+# library(abind)
+# 
+# # Merge along the 3rd dimension (time)
+# PET_EM_merged <- abind(PET_EM_1420, PET_EM_1850, along = 3)
+```
+
+apply land masking
+```{r}
+# # Apply land-sea mask 
+# PET_EM_merged_masked <- apply_land_mask(PET_EM_merged, land_sea_mask)
+# 
+# # #save masked Precip ensemble mean data 
+# saveRDS(PET_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/PET_EM_masked_600yr.rds")
+PET_EM_merged_masked <- readRDS(here("data/PET_EM_masked_600yr.rds"))
+
+
+```
+
+
+Finally repeat for LEN 
+```{r}
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "02_2_pcwd_result_1850/PCWD_maxlen.nc") 
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# 
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1850 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "pcwd_maxlen"))[1]
+# dim_y <- dim(ncvar_get(nc, "pcwd_maxlen"))[2]
+# dim_z <- dim(ncvar_get(nc, "pcwd_maxlen"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "pcwd_maxlen")  # Adjust "tot_precip" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1850[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1850))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+
+Aggregate all 1420 files: 
+
+```{r}
+# # Define the base path
+# path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+# 
+# # List all the directories within the base path
+# folders <- list.files(path, full.names = TRUE)
+# 
+# # Extract ensemble member identifiers from folder names
+# ensemble_members <- basename(folders)
+# 
+# # Identify the target files
+# target_files <- file.path(folders, "02_2_pcwd_result_1420/PCWD_maxlen.nc")
+# target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+# target_files <- target_files[-1] #remove m001 file
+# # Filter ensemble members to match target files
+# ensemble_members <- ensemble_members[file.exists(target_files)]
+# ensemble_members <- ensemble_members[-1]
+# 
+# # Initialize a list to store data for each ensemble member
+# data_by_ensemble_1420 <- list()
+# 
+# # Extract dimensions from the first file to initialize the array size for consistency
+# nc <- nc_open(target_files[1])
+# dim_x <- dim(ncvar_get(nc, "pcwd_maxlen"))[1]
+# dim_y <- dim(ncvar_get(nc, "pcwd_maxlen"))[2]
+# dim_z <- dim(ncvar_get(nc, "pcwd_maxlen"))[3]
+# nc_close(nc)
+# 
+# # Loop through all the target files and store the data in a list
+# for (i in seq_along(target_files)) {
+#   file <- target_files[i]
+#   member <- ensemble_members[i]
+#   
+#   # Open the NetCDF file
+#   nc <- nc_open(file)
+#   
+#   # Extract the data variable
+#   data <- ncvar_get(nc, "pcwd_maxlen")  # Adjust "pcwd_annmax" to your variable name
+#   
+#   # Store the data in the list, keyed by the ensemble member
+#   data_by_ensemble_1420[[member]] <- data
+#   
+#   # Close the file
+#   nc_close(nc)
+# }
+# 
+# # Output the structure of the data list
+# print(names(data_by_ensemble_1420))  # Check stored ensemble members
+# print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+Calculate ensemble means and merge both sets
+
+```{r}
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# LEN_EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+# dim(LEN_EM_1850)
+# 
+# #Calculate ensemble mean of ModESim: 
+# ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
+# 
+# # Compute the ensemble mean across the 4th dim (EMs)
+# LEN_EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 431]
+# dim(LEN_EM_1420)
+# 
+# # Load abind package
+# library(abind)
+# 
+# # Merge along the 3rd dimension (time)
+# LEN_EM_merged <- abind(LEN_EM_1420, LEN_EM_1850, along = 3)
+```
+
+apply land masking
+```{r}
+# # Apply land-sea mask 
+# LEN_EM_merged_masked <- apply_land_mask(LEN_EM_merged, land_sea_mask)
+# 
+# # #save masked Precip ensemble mean data 
+# saveRDS(LEN_EM_merged_masked, file = "/storage/homefs/ph23v078/cwd_global/data/LEN_EM_masked_600yr.rds")
+LEN_EM_merged_masked <- readRDS(here("data/LEN_EM_masked_600yr.rds"))
+
+
+```
+
+
+Second, construct grid cell wise linear regression model over 600 years to get coefficients of variables to PCWD trends
+
+```{r}
+# —————————————————————————————————————————————
+# 1) Your input arrays & coordinate vectors:
+#    PCWD[i,j,1:591],  P[i,j,],  PET[i,j,],  LEN[i,j,]
+#    lon (length dim1), lat (length dim2)
+nx  <- dim(PCWD_EM_merged_masked)[1]   # should be length(lon)
+ny  <- dim(PCWD_EM_merged_masked)[2]   # should be length(lat)
+NT  <- dim(PCWD_EM_merged_masked)[3]   # 591
+
+# 2) Prepare output arrays for standardized coefficients
+beta_arr <- array(NA, dim = c(nx, ny, 3),
+                  dimnames = list(lon = lon,
+                                  lat = lat,
+                                  coef = c("β_P","β_PET","β_LEN")))
+
+# Optional: also capture p-values
+p_arr <- array(NA, dim = c(nx, ny, 3),
+               dimnames = list(lon = lon,
+                               lat = lat,
+                               coef = c("p_P","p_PET","p_LEN")))
+
+# 3) New array for R² values
+r2_arr <- matrix(NA, nrow = nx, ncol = ny)
+
+partial_r2_arr <- array(NA, dim = c(nx, ny, 3),               
+                        dimnames = list(lon = lon,
+                                   lat = lat,
+                                coef = c("R2_P","R2_PET","R2_LEN")))
+
+
+##double looping and fitting linear functions and skipping over ocean cells
+for (i in seq_len(nx)) {
+  for (j in seq_len(ny)) {
+    y  <- PCWD_EM_merged_masked[i, j, ]
+    x1 <- P_EM_merged_masked  [i, j, ]
+    x2 <- PET_EM_merged_masked[i, j, ]
+    x3 <- LEN_EM_merged_masked[i, j, ]
+    
+    # --- only keep years where ALL four series are non-NA
+    ok <- which(!is.na(y) & !is.na(x1) & !is.na(x2) & !is.na(x3))
+    
+    # skip ocean pixels or any cell with too few years
+    if (length(ok) < 10) next
+    
+    # z-score **on the valid years** only
+    ys  <- (y[ok]  - mean(y[ok]))  / sd(y[ok])
+    zs1 <- (x1[ok] - mean(x1[ok])) / sd(x1[ok])
+    zs2 <- (x2[ok] - mean(x2[ok])) / sd(x2[ok])
+    zs3 <- (x3[ok] - mean(x3[ok])) / sd(x3[ok])
+    
+    # fit, now with at least 10 points
+    m <- lm(ys ~ zs1 + zs2 + zs3)
+    s <- summary(m)
+    
+    # store slopes
+    beta_arr[i, j, "β_P"]   <- s$coefficients["zs1", "Estimate"]
+    beta_arr[i, j, "β_PET"] <- s$coefficients["zs2", "Estimate"]
+    beta_arr[i, j, "β_LEN"] <- s$coefficients["zs3", "Estimate"]
+    
+    # store p-values
+    p_arr[i, j, "p_P"]   <- s$coefficients["zs1", "Pr(>|t|)"]
+    p_arr[i, j, "p_PET"] <- s$coefficients["zs2", "Pr(>|t|)"]
+    p_arr[i, j, "p_LEN"] <- s$coefficients["zs3", "Pr(>|t|)"]
+    
+    # partial R²
+    tvals <- s$coefficients[c("zs1", "zs2", "zs3"), "t value"]
+    df_resid <- s$df[2]
+    
+    partial_r2_arr[i, j, "R2_P"]   <- tvals["zs1"]^2 / (tvals["zs1"]^2 + df_resid)
+    partial_r2_arr[i, j, "R2_PET"] <- tvals["zs2"]^2 / (tvals["zs2"]^2 + df_resid)
+    partial_r2_arr[i, j, "R2_LEN"] <- tvals["zs3"]^2 / (tvals["zs3"]^2 + df_resid)
+    
+    # total R²
+    r2_arr[i, j] <- s$r.squared
+  }
+}
+
+
+# —————————————————————————————————————————————
+# 4) Melt into a single data.frame for ggplot
+
+# Expand lon/lat grid in the same order:
+grid <- expand.grid(lon = lon, lat = lat)
+
+df <- bind_cols(
+  grid,
+  betaP   = as.vector(beta_arr[, , "β_P"]),
+  pP      = as.vector(p_arr[,  , "p_P"]),
+  betaPET = as.vector(beta_arr[, , "β_PET"]),
+  pPET    = as.vector(p_arr[,  , "p_PET"]),
+  betaLEN = as.vector(beta_arr[, , "β_LEN"]),
+  pLEN    = as.vector(p_arr[,  , "p_LEN"]),
+  parR2P  = as.vector(partial_r2_arr[, , "R2_P"]),
+  parR2PET  = as.vector(partial_r2_arr[, , "R2_PET"]),
+  parR2LEN  = as.vector(partial_r2_arr[, , "R2_LEN"]),
+  R2      = as.vector(r2_arr)
+)
+
+```
+
+Plot coefficient maps with significance overlay: 
+
+```{r}
+# If you only want to plot Precipitation:
+dfP <- df %>% dplyr::select(lon, lat, beta = betaP, p = pP)
+dfPET <- df %>% dplyr::select(lon, lat, beta = betaPET, p = pPET)
+dfLEN <- df %>% dplyr::select(lon, lat, beta = betaLEN, p = pLEN)
+
+# —————————————————————————————————————————————
+# 5) Plot with ggplot2, overlaying significant pixels (p<0.05)
+land <- ne_countries(scale = "medium", returnclass = "sf")
+#land <- sf::st_transform(land, crs = 4326)
+
+p1 <- 
+ggplot(dfP, aes(lon, lat)) +
+  geom_raster(aes(fill = beta)) +
+  geom_sf(data = land, inherit.aes = FALSE,
+           fill = NA, color = "grey50", size = 0.3) +
+  scale_fill_gradient2(
+    low      = "blue",
+    mid      = "white",
+    high     = "red",
+    midpoint = 0,
+    limits   = c(-1, 1),               # hard–set the range
+    oob      = squish,                 # squish values outside c(-1,1)
+    name     = expression(beta~"(SD units)")
+  ) +
+  coord_sf(xlim = c(-180, 180),
+           ylim = c(-60,   90),
+           expand = FALSE) +
+  labs(
+    title = "Standardized β for P",
+    x     = "",
+    y     = "Latitude"
+  ) +
+  theme_classic(base_size = 14)+
+  theme(legend.position = "none", plot.title = element_text(size=14, hjust = 0), plot.margin = margin(0,0,0,0))
+
+
+p2<- 
+ggplot(dfPET, aes(lon, lat)) +
+  geom_raster(aes(fill = beta)) +
+  geom_sf(data = land, inherit.aes = FALSE,
+           fill = NA, color = "grey50", size = 0.3) +
+  scale_fill_gradient2(
+    low      = "blue",
+    mid      = "white",
+    high     = "red",
+    midpoint = 0,
+    limits   = c(-1, 1),               # hard–set the range
+    oob      = squish,                 # squish values outside c(-1,1)
+    name     = expression(beta~"(SD units)")
+  ) +
+  coord_sf(xlim = c(-180, 180),
+           ylim = c(-60,   90),
+           expand = FALSE) +
+  labs(
+    title = "Standardized β for PET",
+    x     = "",
+    y     = ""
+  ) +
+  theme_classic(base_size = 14)+
+  theme(legend.position = "none", plot.title = element_text(size=14, hjust = 0), plot.margin = margin(0,0,0,0))
+
+
+p3 <- 
+ggplot(dfLEN, aes(lon, lat)) +
+  geom_raster(aes(fill = beta)) +
+  geom_sf(data = land, inherit.aes = FALSE,
+           fill = NA, color = "grey50", size = 0.3) +
+  scale_fill_gradient2(
+    low      = "blue",
+    mid      = "white",
+    high     = "red",
+    midpoint = 0,
+    limits   = c(-1, 1),               # hard–set the range
+    oob      = squish,                 # squish values outside c(-1,1)
+    name     = expression(beta~"(SD units)")
+  ) +
+  coord_sf(xlim = c(-180, 180),
+           ylim = c(-60,   90),
+           expand = FALSE) +
+  labs(
+    title = "Standardized β for LEN",
+    x     = "",
+    y     = ""
+  ) +
+  theme_classic(base_size = 14)+
+  theme(legend.position = "right", plot.title = element_text(size=14, hjust = 0), plot.margin = margin(0,0,0,0))
+
+ggsave(
+  filename = "~/cwd_global/manuscript/trendAttribution_betalegend.pdf",
+  plot     = p3,
+  device   = cairo_pdf,    # better text rendering
+  width    = 16,           # in inches
+  height   = 8.5,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+
+####---------------- with significance masking
+p4<-
+ggplot(dfP, aes(lon, lat)) +
+  geom_raster(aes(fill = beta)) +
+  geom_sf(data = land, inherit.aes = FALSE,
+           fill = NA, color = "grey50", size = 0.3) +
+  geom_point(data = filter(dfP, p < 0.05),
+             aes(lon, lat),
+             shape = 4, size = 0.4, colour = "black") +
+  scale_fill_gradient2(
+    low      = "blue",
+    mid      = "white",
+    high     = "red",
+    midpoint = 0,
+    limits   = c(-1, 1),               # hard–set the range
+    oob      = squish,                 # squish values outside c(-1,1)
+    name     = expression(beta~"(SD units)")
+  ) +
+  coord_sf(xlim = c(-180, 180),
+           ylim = c(-60,   90),
+           expand = FALSE) +
+  labs(
+    title = "Standardized β for P\n(significant pixels marked ×)",
+    x     = "",
+    y     = "Latitude"
+  ) +
+  theme_classic(base_size = 14)+
+  theme(legend.position = "none", plot.title = element_text(size=14, hjust = 0), plot.margin = margin(0,0,0,0))
+
+
+
+p5<-
+ggplot(dfPET, aes(lon, lat)) +
+  geom_raster(aes(fill = beta)) +
+  geom_sf(data = land, inherit.aes = FALSE,
+           fill = NA, color = "grey50", size = 0.3) +
+  geom_point(data = filter(dfPET, p < 0.05),
+             aes(lon, lat),
+             shape = 4, size = 0.4, colour = "black") +
+  scale_fill_gradient2(
+    low      = "blue",
+    mid      = "white",
+    high     = "red",
+    midpoint = 0,
+    limits   = c(-1, 1),               # hard–set the range
+    oob      = squish,                 # squish values outside c(-1,1)
+    name     = expression(beta~"(SD units)")
+  ) +
+  coord_sf(xlim = c(-180, 180),
+           ylim = c(-60,   90),
+           expand = FALSE) +
+  labs(
+    title = "Standardized β for PET\n(significant pixels marked ×)",
+    x     = "",
+    y     = ""
+  ) +
+  theme_classic(base_size = 14)+
+  theme(legend.position = "none", plot.title = element_text(size=14, hjust = 0),plot.margin= margin(0,0,0,0))
+
+
+p6<-
+  ggplot(dfLEN, aes(lon, lat)) +
+  geom_raster(aes(fill = beta)) +
+  geom_sf(data = land, inherit.aes = FALSE,
+           fill = NA, color = "grey50", size = 0.3) +
+  geom_point(data = filter(dfLEN, p < 0.05),
+             aes(lon, lat),
+             shape = 4, size = 0.4, colour = "black") +
+  scale_fill_gradient2(
+    low      = "blue",
+    mid      = "white",
+    high     = "red",
+    midpoint = 0,
+    limits   = c(-1, 1),               # hard–set the range
+    oob      = squish,                 # squish values outside c(-1,1)
+    name     = expression(beta~"(SD units)")
+  ) +
+  coord_sf(xlim = c(-180, 180),
+           ylim = c(-60,   90),
+           expand = FALSE) +
+  labs(
+    title = "Standardized β for LEN\n(significant pixels marked ×)",
+    x     = "",
+    y     = ""
+  ) +
+  theme_classic(base_size = 14)+
+  theme(legend.position = "none", plot.title = element_text(size=14, hjust = 0),plot.margin= margin(0,0,0,0))
+```
+
+Also plot the R2 value (coefficient of determination) that explains how much of PCWD is explained by the linear model
+
+
+```{r}
+ggplot(df, aes(lon, lat)) +
+  geom_raster(aes(fill = R2)) +
+  geom_sf(data = land, inherit.aes = FALSE,
+          fill = NA, color = "grey50", size = 0.3) +
+  scale_fill_viridis_c(name = expression(R^2), limits = c(0, 1)) +
+  coord_sf(xlim = c(-180, 180), ylim = c(-60, 90), expand = FALSE) +
+  labs(
+    title = expression("Model R"^2*" – Total Variance Explained"),
+    x = "Longitude", y = "Latitude"
+  ) +
+  theme_classic(base_size = 14)
+
+```
+
+Partial R2 for each predictor: 
+
+```{r}
+df$R2_P <- as.vector(partial_r2_arr[,, "R2_P"])
+df$R2_PET <- as.vector(partial_r2_arr[,, "R2_PET"])
+df$R2_LEN <- as.vector(partial_r2_arr[,, "R2_LEN"])
+
+p7<-
+  ggplot(df, aes(lon, lat)) +
+  geom_raster(aes(fill = R2_P)) +
+  geom_sf(data = land, inherit.aes = FALSE, fill = NA, color = "grey50", size = 0.3) +
+  scale_fill_viridis_c(name = expression("Partial " ~ R^2), limits = c(0, 1), option= "magma", direction = -1) +
+  coord_sf(xlim = c(-180, 180), ylim = c(-60, 90), expand = FALSE) +
+  labs(
+    title = expression("Partial R"^2*" for P"),
+    x = "Longitude", y = "Latitude"
+  ) +
+  theme_classic(base_size = 14)+
+  theme(legend.position = "none", plot.title = element_text(size=14, hjust = 0),plot.margin= margin(0,0,0,0))
+
+p8<-
+  ggplot(df, aes(lon, lat)) +
+  geom_raster(aes(fill = R2_PET)) +
+  geom_sf(data = land, inherit.aes = FALSE, fill = NA, color = "grey50", size = 0.3) +
+  scale_fill_viridis_c(name = expression("Partial " ~ R^2), limits = c(0, 1), option= "magma", direction = -1) +
+  coord_sf(xlim = c(-180, 180), ylim = c(-60, 90), expand = FALSE) +
+  labs(
+    title = expression("Partial R"^2*" for PET"),
+    x = "Longitude", y = ""
+  ) +
+  theme_classic(base_size = 14)+
+  theme(legend.position = "none", plot.title = element_text(size=14, hjust = 0),plot.margin= margin(0,0,0,0))
+
+p9<-
+  ggplot(df, aes(lon, lat)) +
+  geom_raster(aes(fill = R2_LEN)) +
+  geom_sf(data = land, inherit.aes = FALSE, fill = NA, color = "grey50", size = 0.3) +
+  scale_fill_viridis_c(name = expression("Partial " ~ R^2), limits = c(0, 1), option= "magma", direction = -1) +
+  coord_sf(xlim = c(-180, 180), ylim = c(-60, 90), expand = FALSE) +
+  labs(
+    title = expression("Partial R"^2*" for LEN"),
+    x = "Longitude", y = ""
+  ) +
+  theme_classic(base_size = 14)+
+  theme(legend.position = "right", plot.title = element_text(size=14, hjust = 0),plot.margin = margin(0,0,0,0), legend.title = element_text(face = "bold"))
+
+ggsave(
+  filename = here::here("manuscript/trendAttribution_R2legend.pdf"),
+  plot     = p9,
+  device   = cairo_pdf,    # better text rendering
+  width    = 16,           # in inches
+  height   = 8.5,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+#save.image(".RData")
+```
+
+
+patchwork the plots together
+
+```{r}
+#### combine plots in grid and save
+# rollingRP_MED2 <- rollingRP_MED + theme(plot.margin = margin(t = 10, r = 10, b = 5, l = 5))
+# rollingRP_ARP2 <- rollingRP_ARP + theme(plot.margin = margin(t = 0, r = 10, b = 5, l = 5))
+# rollingRP_CAU2 <- rollingRP_CAU + theme(plot.margin = margin(t = 0, r = 10, b = 5, l = 5))
+# rollingRP_WNA2 <- rollingRP_WNA + theme(plot.margin = margin(t = 10, r = 10, b = 5, l = 5))
+
+combined_trendAttr <- plot_grid(
+  p1, p2, p3,
+  p4, p5, p6,
+  p7, p8, p9,
+  ncol = 3,
+  nrow = 3,
+  rel_widths = c(1, 1, 1),
+  rel_heights = c(1,1,1),
+  align = "h",
+  axis = "tblr",
+  labels = c(
+    "a)",  "b) ", "c)", "d)", "e)", "f)", "g)", "h)", "i)"
+  ),
+  label_size = 14,
+  label_x = 0.082,
+  hjust = 0,
+  label_y = 0.91,
+  vjust = 1
+)
+
+
+ggsave(
+  filename = here::here("manuscript/trendAttribution.pdf"),
+  plot     = combined_trendAttr,
+  device   = cairo_pdf,    # better text rendering
+  width    = 16,           # in inches
+  height   = 8.5,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+```
+
