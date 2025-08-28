@@ -615,7 +615,7 @@ anom_MED <- ggplot() +
   geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
 
   # Plot individual ensemble members with distinct colors
-  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.4, linewidth = 0.3, show.legend = TRUE) +
   # Plot mean anomaly as a bold black line
   geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
   # Dashed lines for ±2σ bounds
@@ -2304,8 +2304,8 @@ ensemble_band_df <- combined_df_sel %>%
   group_by(region, time) %>%
   summarise(
     RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.05, na.rm = TRUE),
-    RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+    RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+    RP_upper = quantile(RP, 1, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -2324,7 +2324,7 @@ rollingRP_MED <- ggplot() +
 #           fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
   geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
   geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
-                                           fill = "ModE-Sim Ensemble Range (5th-95th)"), alpha = 0.4) +
+                                           fill = "ModE-Sim Ensemble Range"), alpha = 0.4) +
   geom_line(data = ensemble_band_df, aes(x = time_warped, y = RP_mean,
                                          color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
   geom_line(data = combined_era_sel, aes(x = time_warped, y = RP,
@@ -2337,11 +2337,11 @@ rollingRP_MED <- ggplot() +
     labels = c( "1500", "1600", "1700", "1800", "1900", "1950", "1970", "1990", "2010"),
     name = ""
   ) +
-  scale_y_log10(name = expression("Effective Return Period (" * log[10] * ")"),
+  scale_y_log10(name = expression("Effective Return Period"),
         breaks = c(1, 2, 5, 10, 20, 50, 100),
   labels = c("1", "2", "5", "10", "20", "50", "100")) +  # Log scale for y-axis
   scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble Range (5th-95th)" = "grey70")) +
+  scale_fill_manual(values = c("ModE-Sim Ensemble Range" = "grey70")) +
   labs(title = "", color = "Line", fill = "Shading") +
   theme_classic() +
   theme(
@@ -2372,8 +2372,8 @@ ensemble_band_df <- combined_df_sel %>%
   group_by(region, time) %>%
   summarise(
     RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.05, na.rm = TRUE),
-    RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+    RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+    RP_upper = quantile(RP, 1, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -2391,7 +2391,7 @@ rollingRP_ARP <- ggplot() +
   #         fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
   geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range (5th-95th)"),alpha = 0.4) +
+  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range"),alpha = 0.4) +
   # Ensemble mean line with legend
   geom_line(data = ensemble_band_df, aes(x = time_warped, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
   # ERA5 line with legend
@@ -2404,7 +2404,7 @@ rollingRP_ARP <- ggplot() +
     labels = c("1500", "1600", "1700", "1800", "1900", "1950", "1970", "1990", "2010"),
     name = "Year"
   ) +
-  scale_y_log10(name = expression("Effective Return Period (" * log[10] * ")"),
+  scale_y_log10(name = expression("Effective Return Period"),
         breaks = c(2, 5, 10, 20, 30),
   labels = c( "2", "5", "10", "20", "30")) +  # Log scale for y-axis
   # Labels and theme
@@ -2414,7 +2414,7 @@ rollingRP_ARP <- ggplot() +
     fill = "Shading"
   ) +
   scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble Range (5th-95th)" = "grey70")) +
+  scale_fill_manual(values = c("ModE-Sim Ensemble Range" = "grey70")) +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -2447,8 +2447,8 @@ ensemble_band_df <- combined_df_sel %>%
   group_by(region, time) %>%
   summarise(
     RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.05, na.rm = TRUE),
-    RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+    RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+    RP_upper = quantile(RP, 1, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -2466,7 +2466,7 @@ rollingRP_CAU <-ggplot() +
   #         fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
   geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range (5th-95th)"),alpha = 0.4) +
+  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range"),alpha = 0.4) +
   # Ensemble mean line with legend
   geom_line(data = ensemble_band_df, aes(x = time_warped, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
   # ERA5 line with legend
@@ -2488,7 +2488,7 @@ rollingRP_CAU <-ggplot() +
     fill = "Shading"
   ) +
   scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble Range (5th-95th)" = "grey70")) +
+  scale_fill_manual(values = c("ModE-Sim Ensemble Range" = "grey70")) +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -2522,8 +2522,8 @@ ensemble_band_df <- combined_df_sel %>%
   group_by(region, time) %>%
   summarise(
     RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.05, na.rm = TRUE),
-    RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+    RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+    RP_upper = quantile(RP, 1, na.rm = TRUE),
     .groups = "drop"
   )
 # Apply to both datasets
@@ -2540,7 +2540,7 @@ rollingRP_WNA <-ggplot() +
   #         fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
   geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble\nRange (5th-95th)"),alpha = 0.4) +
+  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble\nRange"),alpha = 0.4) +
   # Ensemble mean line with legend
   geom_line(data = ensemble_band_df, aes(x = time_warped, y = RP_mean, color = "ModE-Sim Mean\n(1420-2009)"), linewidth = 1) +
   # ERA5 line with legend
@@ -2562,7 +2562,7 @@ rollingRP_WNA <-ggplot() +
     fill = "Shading"
   ) +
   scale_color_manual(values = c("ModE-Sim Mean\n(1420-2009)" = "black", "ERA5-Land (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble\nRange (5th-95th)" = "grey70")) +
+  scale_fill_manual(values = c("ModE-Sim Ensemble\nRange" = "grey70")) +
   theme_classic() +
   theme(
     legend.position = "right",
@@ -2605,7 +2605,7 @@ combined_rollingRP <- plot_grid(
 print(combined_rollingRP)
 
 ggsave(
-  filename = here::here("manuscript/rollingRP.pdf"),
+  filename = here::here("figures/rollingRP.pdf"),
   plot     = combined_rollingRP,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -2616,7 +2616,7 @@ ggsave(
 )
 
 ggsave(
-  filename = here::here("manuscript/rollingRP_legend.pdf"),
+  filename = here::here("figures/rollingRP_legend.pdf"),
   plot     = rollingRP_WNA,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -3795,7 +3795,7 @@ plot_exceed_map <- function(regions_to_show) {
     geom_sf_text(
       data = pts,
       aes(label = label),
-      size = 3.5,
+      size = 2,
       colour= "black"
     ) +
     scale_fill_manual(
@@ -4223,4 +4223,854 @@ plot_tvalue_with_hatch("t_full", "exceed_all")
 # )
 
 ```
+
+
+## Scatterplots comparing annual PCWD over time to 30yr extremes over time
+### Approach
+
+Determining whether 21st century (2000-2024) droughts are unprecedented and quantifying their "extremeness" depends on the reference. Here, we determine these aspects based on alternative choices of the reference:
+
+1. Recent past climate reanalysis (ERA5) data (1975-1999)
+2. Recent past climate model simulation, across all ensemble members (1975-1999)
+3. Historical climate model simulation, across all ensemble members (1850-1999)
+4. Multi-centennial preindustrial climate model simulation, across all ensemble members (1420-1999)
+
+The magnitude of 21st century droughts are estimated based on ERA5 climate reanalysis data for years 2000-2024.
+
+## Read data
+
+### ERA5
+
+Interpreting the objects into nice and tidy data frames.
+```{r}
+list_era5 <- read_rds(here("data/regional_results_ERA5Land.rds"))
+
+nregions <- length(list_era5)
+
+make_df_era5 <- function(vec){
+  tibble(
+    year = 1970:2024,
+    pcwd = vec
+  )
+}
+
+df_era5 <- purrr::map(
+  list_era5, 
+  ~make_df_era5(.)
+) |> 
+  bind_rows(.id = "region")
+
+df_era5 <- df_era5 |> 
+  filter(region != "SAH") #exclude Sahara Desert as unphysical values
+```
+
+### ModE-Sim
+
+```{r}
+extract_ensemble_number <- function(char){
+  char |> 
+    str_remove("_tidy") |> 
+    str_remove("m0") |> 
+    as.integer()
+}
+
+make_df_modesim <- function(df){
+  as_tibble(df) |> 
+    # not sure this is correct. Better to take years forward as part of the workflow. 
+    mutate(year = 1420:2009) |> 
+    pivot_longer(
+      cols = ends_with("_tidy"), 
+      names_to = "member", 
+      values_to = "pcwd", 
+      names_transform = extract_ensemble_number
+      )
+}
+
+list_modesim <- read_rds(here("data/regional_results_ModESim_bc.rds"))
+
+df_modesim <- purrr::map(
+  list_modesim,
+  ~make_df_modesim(.)
+) |> 
+  bind_rows(.id = "region")
+
+df_modesim <- df_modesim |> 
+  filter(region != "SAH")
+```
+
+
+## Record annual values
+
+Create objects that contain records for different references in different datasets.
+
+### ERA5
+
+1. ERA5: Record PCWD by region in years 1975-1999 and in years 2000-2024.
+```{r}
+df_record_era5 <- df_era5 |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+
+```
+
+Plot.
+```{r}
+# calculate SD of pcwd_max0
+sd0 <- df_era5 |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region) |> 
+  summarise(sd_pcwd = sd(pcwd, na.rm = TRUE)) |> 
+  ungroup()
+
+tmp <- df_record_era5 |>
+  left_join(sd0, by = "region") |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0,
+    is_shattering = pcwd_max1 > pcwd_max0 + 2 * sd_pcwd,
+    color_cat = case_when(
+      is_shattering ~ "shattering",
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
+
+# plot
+gg1 <- tmp |>
+  ggplot(aes(pcwd_max0, pcwd_max1, color = color_cat)) +
+  geom_point(size = 0.9, show.legend = TRUE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                "unprecedented" = "#4B88A2",
+                                "shattering" = "#BB0A21")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ERA5 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N[unprecedented]) == .(n_greater) ~ ", " ~ 
+                      italic(N[record-shattering]) == .(n_shattering)),
+    title = ""
+  )+  theme(
+    legend.position = c(0.05, 0.95),   # inside top-left
+    legend.justification = c("left", "top"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+gg1
+```
+Plot which regions are unprecedented and which record shattering
+
+```{r}
+#Load reference regions and coastlines:
+load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
+
+# IPCC_WGI_reference_regions_v4 is a Spatial*DataFrame with a column "region" (or similar)
+refregions_sf <- st_as_sf(IPCC_WGI_reference_regions_v4)
+refregions_sf <- refregions_sf %>% rename(region = Acronym)
+
+temp.dir <- tempdir()
+unzip(here::here("data/Reference_regions/ne_110m_coastline.zip"), exdir = temp.dir)
+coastLines <- st_read(dsn = temp.dir, layer = "ne_110m_coastline")
+
+names(names(refregions))
+
+proj4string(refregions)
+
+
+# Load land data for filling continents
+land <- ne_countries(scale = "medium", returnclass = "sf")
+```
+
+
+```{r}
+colors_map <- c("within" = "#301934", 
+                "unprecedented"     = "#4B88A2", 
+                "shattering"  = "#BB0A21")
+
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_recent <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = c(0.05, 0.05),   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_recent
+
+```
+
+
+### ModE-Sim recent (1975-1999)
+
+Record PCWD by region in ERA5, years 2000-2024 vs. in years 1975-1999 and all ensemble members in ModE-Sim.
+```{r}
+df_record_era5_modesim_recent <- df_modesim |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region, member) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+# calculate SD of pcwd_max0
+sd1 <- df_modesim |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region) |> 
+  summarise(sd_pcwd = sd(pcwd, na.rm = TRUE)) |> 
+  ungroup()
+
+tmp <- df_record_era5_modesim_recent |> 
+  left_join(sd1, by = "region") |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0_right,
+    is_shattering = pcwd_max1 > pcwd_max0_right + 2 * sd_pcwd,
+    color_cat = case_when(
+      is_shattering ~ "shattering",
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
+
+
+gg2 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("within" = "#301934",
+                                "unprecedented" = "#4B88A2",
+                                "shattering" = "#BB0A21")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N[unprecedented]) == .(n_greater) ~ ", " ~ 
+                      italic(N[record-shattering]) == .(n_shattering)),
+    title = "   "
+  )
+
+gg2
+```
+
+
+Plot which regions are unprecedented and which record shattering
+```{r}
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_mode_recent <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  theme_void() +
+  theme(
+    plot.title      = element_text(face = "bold", hjust = .5),
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none"
+  )
+
+map_mode_recent
+```
+
+
+
+### ModE-Sim historical (1850-1999)
+
+Record PCWD by region in ERA5, years 2000-2024 vs. in years 1850-1999 and all ensemble members in ModE-Sim.
+```{r}
+df_record_era5_modesim_historical <- df_modesim |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(region, member) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+# calculate SD of pcwd_max0
+sd2 <- df_modesim |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(region) |> 
+  summarise(sd_pcwd = sd(pcwd, na.rm = TRUE)) |> 
+  ungroup()
+
+tmp <- df_record_era5_modesim_historical |> 
+  left_join(sd2, by = "region") |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0_right,
+    is_shattering = pcwd_max1 > pcwd_max0_right + 2 * sd_pcwd,
+    color_cat = case_when(
+      is_shattering ~ "shattering",
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
+
+
+gg3 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("within" = "#301934",
+                                "unprecedented" = "#4B88A2",
+                                "shattering" = "#BB0A21")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1850-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N[unprecedented]) == .(n_greater) ~ ", " ~ 
+                      italic(N[record-shattering]) == .(n_shattering)),
+    title = "   "
+  )
+
+gg3
+```
+
+
+Plot which regions are unprecedented and which record shattering
+
+
+```{r}
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_historical <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  theme_void() +
+  theme(
+    plot.title      = element_text(face = "bold", hjust = .5),
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none"
+  )
+
+map_historical
+```
+### ModE-Sim multi-century (1420-1999)
+
+Record PCWD by region in ERA5, years 2000-2024 vs. in years 1850-1999 and all ensemble members in ModE-Sim.
+```{r}
+df_record_era5_modesim_multicent <- df_modesim |> 
+  filter(year %in% 1420:1999) |> 
+  group_by(region, member) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+# calculate SD of pcwd_max0
+sd3 <- df_modesim |> 
+  filter(year %in% 1420:1999) |> 
+  group_by(region) |> 
+  summarise(sd_pcwd = sd(pcwd, na.rm = TRUE)) |> 
+  ungroup()
+
+tmp <- df_record_era5_modesim_multicent |> 
+  left_join(sd3, by = "region") |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0_right,
+    is_shattering = pcwd_max1 > pcwd_max0_right + 2 * sd_pcwd,
+    color_cat = case_when(
+      is_shattering ~ "shattering",
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
+
+gg4 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 0.75) +
+  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(name = "Event type", values = c("within" = "#301934",
+                                "unprecedented" = "#4B88A2",
+                                "shattering" = "#BB0A21")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1420-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N[unprecedented]) == .(n_greater) ~ ", " ~ 
+                      italic(N[record-shattering]) == .(n_shattering)),
+    title = "   "
+  )
+
+gg4
+#ggsave(here("figures/category_scatter_legend.pdf"), plot = gg4, width = 6, height = 4)
+```
+
+Plot which regions are unprecedented and which record shattering
+
+```{r}
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_multicen <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event type"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  theme_void() +
+  theme(legend.position = "none")
+
+map_multicen
+
+#ggsave(here("figures/category_maps_legend.pdf"), plot = map_multicen, width = 8, height = 4)
+```
+
+## 30-year extremes (pooled)
+
+Calculate rolling 30-year extremes of all data, separated by region (ModE-Sim also separated by ensemble member).
+```{r}
+# Function: fit Gumbel with extRemes and estimate given year return level
+fit_gumbel_return <- function(vec, return_period = 30) {
+  # Fit Gumbel (GEV with shape = 0)
+  fit <- extRemes::fevd(vec, type = "Gumbel")
+  
+  # Estimate T-year return level
+  rl <- unname(c(return.level(fit, return.period = return_period)))
+
+  return(rl)
+}
+
+calc_30x <- function(df){
+  fit_gumbel_return(df$pcwd)
+}
+
+calc_30x_across_members <- function(df){
+  # Collapse selected columns into vector
+  vec <- unlist(df %>% dplyr::select(-year))
+  vec <- vec[is.finite(vec)]
+  fit_gumbel_return(vec, return_period = 30)
+}
+
+apply_pooled <- function(df, years){
+  df |> 
+    filter(year %in% years) |> 
+    calc_30x_across_members()
+}
+
+# fit two extreme value distributions on the two ERA5 periods and extract the 
+# 30-year extreme value.
+df_era5_30x <- df_era5 |> 
+  mutate(period = ifelse(year %in% 1975:1999, "pcwd_x30_ref0", ifelse(year %in% 2000:2024, "pcwd_x30_ref1", NA))) |> 
+  group_by(region, period) |> 
+  nest() |> 
+  drop_na(period) |> 
+  mutate(pcwd_30x = purrr::map_dbl(data, ~calc_30x(.))) |> 
+  pivot_wider(id_cols = -data, values_from = "pcwd_30x", names_from = "period")
+
+
+# fit extreme value distributions on data pooled from all years in different periods
+df_modesim_30x_pooled <- df_modesim |> 
+  mutate(member = paste0("m", as.integer(member))) |> 
+  pivot_wider(names_from = "member", values_from = "pcwd") |> 
+  group_by(region) |> 
+  nest()
+  
+df_modesim_30x_pooled_multicent <- df_modesim_30x_pooled |> 
+  mutate(pcwd_30x = map_dbl(data, ~apply_pooled(., years = 1420:1999)))
+
+df_modesim_30x_pooled_historical <- df_modesim_30x_pooled |> 
+  mutate(pcwd_30x = map_dbl(data, ~apply_pooled(., years = 1850:1999)))
+
+df_modesim_30x_pooled_recent <- df_modesim_30x_pooled |> 
+  mutate(pcwd_30x = map_dbl(data, ~apply_pooled(., years = 1975:1999)))
+```
+
+### ERA5
+
+```{r}
+tmp <- df_era5_30x |> 
+  mutate(is_greater = pcwd_x30_ref0 < pcwd_x30_ref1)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg5 <- tmp |> 
+  ggplot(aes(pcwd_x30_ref0, pcwd_x30_ref1, color = is_greater)) +
+  geom_point(size = 0.9, show.legend = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("#301934", "#4B88A2")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ERA5 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N[unprecedented]) == .(n_greater)),
+    title = ""
+  )
+
+gg5
+```
+
+
+### ModE-Sim recent (1975-1999)
+
+```{r}
+df_30x_pooled_recent <- df_modesim_30x_pooled_recent |> 
+  dplyr::select(-data, pcwd_x30_ref0 = pcwd_30x) |> 
+  left_join(
+    df_era5_30x |> 
+      dplyr::select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+```{r}
+tmp <- df_30x_pooled_recent |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg6 <- tmp |> 
+  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = is_greater)) +
+  geom_point(show.legend = FALSE, size = 0.9) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("#301934", "#4B88A2")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N[unprecedented]) == .(n_greater)),
+    title = "   "
+  )
+
+gg6
+```
+
+### ModE-Sim historical (1850-1999)
+
+```{r}
+df_30x_pooled_historical <- df_modesim_30x_pooled_historical |> 
+  dplyr::select(-data, pcwd_x30_ref0 = pcwd_30x) |> 
+  left_join(
+    df_era5_30x |> 
+      dplyr::select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+```{r}
+tmp <- df_30x_pooled_historical |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg7 <- tmp |> 
+  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = is_greater)) +
+  geom_point(show.legend = FALSE, size = 0.9) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("#301934", "#4B88A2")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1850-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N[unprecedented]) == .(n_greater)),
+    title = "   "
+  )
+
+gg7
+```
+
+### ModE-Sim multi-century (1420-1999)
+
+```{r}
+df_30x_pooled_multicent <- df_modesim_30x_pooled_multicent |> 
+  dplyr::select(-data, pcwd_x30_ref0 = pcwd_30x) |> 
+  left_join(
+    df_era5_30x |> 
+      dplyr::select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+```{r}
+tmp <- df_30x_pooled_multicent |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0)
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg8 <- tmp |> 
+  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = is_greater)) +
+  geom_point(show.legend = FALSE, size = 0.9) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("#301934", "#4B88A2")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1420-1999 (mm)",
+    y = "ERA5 2000-2024 (mm)",
+    subtitle = bquote(italic(N[unprecedented]) == .(n_greater)),
+    title = "   "
+  )
+
+gg8
+```
+
+```{r}
+#map_recent <- map_recent + theme(plot.margin = margin(0, 0, 0, 0))
+row1 <- plot_grid(
+  gg1, gg5,  map_recent,
+  ncol = 3,
+  rel_widths = c(1,1, 1.6), # map takes smaller horizontal space
+  align = "v",
+    labels = c(
+    "a) Record annual PCWD",
+    "e) 30-year extreme PCWD",
+    "i) Record annual PCWD mapped"),
+  label_x = 0.1,  # left side
+  label_y = 1,   # top
+  hjust = 0
+)
+
+row2 <- plot_grid(
+  gg2, gg6,  map_mode_recent,
+  ncol = 3,
+  rel_widths = c(1,1, 1.6), # map takes smaller horizontal space
+  align = "v",
+    labels = c(
+    "b)",
+    "f)",
+    "j)"),
+  label_x = 0.1,  # left side
+  label_y = 1   # top
+  )
+
+row3 <- plot_grid(
+  gg3, gg7,  map_historical,
+  ncol = 3,
+  rel_widths = c(1,1, 1.6), # map takes smaller horizontal space
+  align = "v",
+    labels = c(
+    "c)",
+    "g)",
+    "k)"),
+  label_x = 0.1,  # left side
+  label_y = 1   # top
+  )
+
+row4 <- plot_grid(
+  gg4, gg8,  map_multicen,
+  ncol = 3,
+  rel_widths = c(1,1, 1.6), # map takes smaller horizontal space
+  align = "v",
+    labels = c(
+    "d)",
+    "h)",
+    "l)"),
+  label_x = 0.1,  # left side
+  label_y = 1   # top
+  )
+```
+
+
+## All combined plot
+
+```{r}
+gg_combined <- cowplot::plot_grid(
+  row1, row2, row3, row4,
+  nrow=4
+  )
+ggsave(here("figures/combined_references.pdf"), plot = gg_combined, width = 14, height = 14)
+```
+
 
