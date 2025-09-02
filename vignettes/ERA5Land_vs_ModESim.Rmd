@@ -4353,7 +4353,7 @@ gg1 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
-                                "unprecedented" = "#00A676",
+                                "unprecedented" = "#91C499",
                                 "shattering" = "#B3001B")) +
   theme_classic() +
   scale_x_log10() +
@@ -4399,7 +4399,7 @@ land <- ne_countries(scale = "medium", returnclass = "sf")
 
 ```{r}
 colors_map <- c("within" = "#301934", 
-                "unprecedented"     = "#00A676", 
+                "unprecedented"     = "#91C499", 
                 "shattering"  = "#B3001B")
 
 # Join categories onto the spatial data
@@ -4502,7 +4502,7 @@ gg2 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(values = c("within" = "#301934",
-                                "unprecedented" = "#00A676",
+                                "unprecedented" = "#91C499",
                                 "shattering" = "#B3001B")) +
   theme_classic() +
   scale_x_log10() +
@@ -4619,7 +4619,7 @@ gg3 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(values = c("within" = "#301934",
-                                "unprecedented" = "#00A676",
+                                "unprecedented" = "#91C499",
                                 "shattering" = "#B3001B")) +
   theme_classic() +
   scale_x_log10() +
@@ -4734,7 +4734,7 @@ gg4 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event type", values = c("within" = "#301934",
-                                "unprecedented" = "#00A676",
+                                "unprecedented" = "#91C499",
                                 "shattering" = "#B3001B")) +
   theme_classic() +
   scale_x_log10() +
@@ -4871,7 +4871,7 @@ gg5 <- tmp |>
   geom_point(size = 0.9, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
-  scale_color_manual(values = c("#301934", "#00A676")) +
+  scale_color_manual(values = c("#301934", "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
@@ -4912,7 +4912,7 @@ gg6 <- tmp |>
   geom_point(show.legend = FALSE, size = 0.9) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
-  scale_color_manual(values = c("#301934", "#00A676")) +
+  scale_color_manual(values = c("#301934", "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
@@ -4952,7 +4952,7 @@ gg7 <- tmp |>
   geom_point(show.legend = FALSE, size = 0.9) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
-  scale_color_manual(values = c("#301934", "#00A676")) +
+  scale_color_manual(values = c("#301934", "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
@@ -4992,7 +4992,7 @@ gg8 <- tmp |>
   geom_point(show.legend = FALSE, size = 0.9) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
-  scale_color_manual(values = c("#301934", "#00A676")) +
+  scale_color_manual(values = c("#301934", "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
