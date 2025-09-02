@@ -20,6 +20,15 @@
 # RStudio files
 .Rproj.user/
 
+# produced figures
+figures/
+
+# produced data
+data/*.RData
+data/*.rds
+data/*.csv
+data/volc_impact_aggregates/
+
 # produced vignettes
 vignettes/*.html
 vignettes/*.pdf

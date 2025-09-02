@@ -1,0 +1,1513 @@
+---
+title: "Spatial global comparison of ModE-Sim vs ERA5Land output and bias correction"
+author: "Patricia Helpap"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, echo=FALSE}
+library(readr)
+library(dplyr)
+library(here)
+library(lubridate)
+library(patchwork)
+library(ggplot2)
+library(ncdf4)
+library(reshape2)
+library(ggpubr)
+library(maps)
+library(terra)
+library(rnaturalearth)
+library(sf)
+library(sp)
+library(RColorBrewer)
+library(tidyverse)
+library(abind)
+library(patchwork)
+library(gridExtra)
+library(ggsci)
+library(purrr)
+library(qmap)
+library(cowplot)
+library(extRemes)
+library(ggpattern)
+
+```
+
+## Comparison of ModE-Sim and ERA5-Land PCWD data
+### Read in ERA5Land data
+
+Read in and select only the overlapping years (1950-2009)
+```{r}
+#lat lon and time info from netcdf files
+##read in data - stored on Ubelix server
+input_file_ERA5 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ERA5Land_1950-2024/04_result/PCWD_ANNMAX.nc" 
+
+nc_pwcd_ERA5 <- nc_open(input_file_ERA5)
+pcwd_annmax_ERA5 = ncvar_get(nc_pwcd_ERA5, varid="pcwd_annmax")
+lon = ncvar_get(nc_pwcd_ERA5, varid="lon")
+lat = ncvar_get(nc_pwcd_ERA5, varid="lat") # --- will contain less latitudes as only contains Land data
+time_ERA5 = ncvar_get(nc_pwcd_ERA5, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_ERA5 <- reference_date + time_ERA5
+# 
+# Filter data to retain only years up to 2009
+years <- as.numeric(format(time_dates_ERA5, "%Y"))
+keep_indices <- which(years <= 2009)
+
+# Subset time and data arrays
+time_dates_ERA5_fil <- time_dates_ERA5[keep_indices]
+pcwd_annmax_ERA5_fil <- pcwd_annmax_ERA5[,,keep_indices]  # Assuming time is the 3rd dimension
+
+
+nc_close(nc_pwcd_ERA5)
+
+```
+
+
+### Read in ModE-Sim data 
+
+Read in lat, lon and time info: 
+```{r}
+#lat lon and time info from netcdf files
+##read in data
+input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
+
+nc_pwcd_1850 <- nc_open(input_file_1850)
+pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")
+lon = ncvar_get(nc_pwcd_1850, varid="lon")
+lat = ncvar_get(nc_pwcd_1850, varid="lat") 
+time_1850 = ncvar_get(nc_pwcd_1850, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_1850 <- reference_date + time_1850
+
+# Filter data to retain only years up to 2009
+years <- as.numeric(format(time_dates_1850, "%Y"))
+keep_indices <- which(years >= 1950)
+
+# Subset time and data arrays
+time_dates_1850_fil <- time_dates_1850[keep_indices]
+pcwd_annmax_1850_fil <- pcwd_annmax_1850[,,keep_indices]  # Assuming time is the 3rd dimension
+
+nc_close(nc_pwcd_1850)
+
+## read in 1420 period
+input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
+
+nc_pwcd_1420 <- nc_open(input_file_1420)
+pcwd_annmax_1420 = ncvar_get(nc_pwcd_1420, varid="pcwd_annmax")
+time_1420 = ncvar_get(nc_pwcd_1420, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_1420 <- reference_date + time_1420
+
+# Filter data to retain only years up to 2009
+years <- as.numeric(format(time_dates_1420, "%Y"))
+
+nc_close(nc_pwcd_1420)
+```
+
+aggregate files and select only the overlapping years (1950-2009): 
+```{r}
+#### 1850 set: 
+# Define the base path
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "04_result_1850/PCWD_ANNMAX.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_1850_fil <- list()
+data_by_ensemble_1850 <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+nc_close(nc)
+
+# Convert time variable to actual dates (assuming "days since 2001-01-01")
+reference_date <- as.Date("2001-01-01")
+time_dates <- reference_date + time_1850
+
+# Find indices corresponding to years >= 1968
+years <- as.numeric(format(time_dates, "%Y"))
+keep_indices <- which(years >= 1950)
+
+# Loop through all the target files and filter data
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+  
+  # Subset data to retain only years from 1968 onwards
+  data_filtered <- data[,,keep_indices]
+
+  # Store the filtered data in the list
+  data_by_ensemble_1850_fil[[member]] <- data_filtered
+  data_by_ensemble_1850[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_1850_fil))  # Check stored ensemble members
+print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+
+Aggregate 1420 files also: 
+```{r}
+#### 1420 set: 
+# Define the base path - have to think of way to seperate sets once there is data!!
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "04_result_1420/PCWD_ANNMAX.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_1420 <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "pcwd_annmax"))[1]
+dim_y <- dim(ncvar_get(nc, "pcwd_annmax"))[2]
+dim_z <- dim(ncvar_get(nc, "pcwd_annmax"))[3]
+nc_close(nc)
+
+# Convert time variable to actual dates (assuming "days since 2001-01-01")
+reference_date <- as.Date("2001-01-01")
+time_dates <- reference_date + time_1420
+
+# Loop through all the target files and filter data
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "pcwd_annmax")  # Adjust "pcwd_annmax" to your variable name
+   
+  # Store the filtered data in the list
+  data_by_ensemble_1420[[member]] <- data[,,1:430] #only until 1849
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_1420))  # Check stored ensemble members
+print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+```
+
+
+Compare global distribution of data sets
+```{r}
+#Calculate epoch mean of ModESim: 
+ensemble_array <- simplify2array(data_by_ensemble_1850_fil)  # Shape: [192, 96, 42, 20]
+
+# Compute the ensemble mean across the 3rd dimension (time)
+ensemble_means_1850 <- apply(ensemble_array, c(1, 2, 4), mean, na.rm = TRUE)  # Shape: [192, 96, 20]
+dim(ensemble_means_1850)
+# Compute the ensemble mean across the 3rd dimension (time)
+means_1850 <- apply(ensemble_means_1850, c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+dim(means_1850)
+
+#Calculate epoch mean for ERA5:
+ensemble_array <- simplify2array(pcwd_annmax_ERA5_fil)  # Shape: [192, 96, 42]
+
+# Compute the ensemble mean across the 3rd dimension (time)
+means_ERA5 <- apply(ensemble_array, c(1, 2), mean, na.rm = TRUE)  # Shape: [192, 96]
+dim(means_ERA5)
+
+```
+
+
+
+```{r}
+#plot ERA5Land data to validate
+r <- raster(t(means_ERA5), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+#r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249", 
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f", 
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+# Define the numeric labels for the breaks
+break_labels <- c(as.character(scales::label_number(accuracy = 1)(custom_bins[-length(custom_bins)])), "Ocean")
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Australia
+
+
+# Define the ggplot2 object with the gradient scale
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = custom_colors, na.value = "grey50", 
+                    labels = c(levels(cut(r_df$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "ERA5-Land", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+```
+
+```{r}
+#plot ModESim ensemble mean for the same period
+r <- raster(t(means_1850), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249", 
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f", 
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+# Define the numeric labels for the breaks
+break_labels <- c(as.character(scales::label_number(accuracy = 1)(custom_bins[-length(custom_bins)])), "Ocean")
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Australia
+
+
+# Define the ggplot2 object with the gradient scale
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = custom_colors, na.value = "grey50", 
+                    labels = c(levels(cut(r_df$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "ModE-Sim", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=18), legend.text = element_text(size=18), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+```
+
+
+Calculate spatial bias of ModESim data - ensemble mean 
+```{r}
+#ModE-Sim data - ERA5Land data
+spatial_bias <-  means_1850 - means_ERA5
+
+##prepare for plotting:
+r <- raster(t(spatial_bias), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(-Inf, -2000, -1000, -500, -250, -100, -50, 0, 50, 100, 250, 500, 1000, 2000, Inf)  # Define breaks based on data range
+
+custom_colors <- colorRampPalette(c("blue", "white", "red"))(length(custom_bins)-1)
+
+# Define the numeric labels for the breaks
+break_labels <- c(as.character(scales::label_number(accuracy = 1)(custom_bins[-length(custom_bins)])), "Ocean")
+
+#–– build the labels for all 14 bins
+finite_vals <- custom_bins[!is.infinite(custom_bins)]
+mid_lbls    <- paste0(finite_vals[-length(finite_vals)], "–", finite_vals[-1])
+
+lbls <- c(
+  paste0("<", finite_vals[1]),   # "<-1000"
+  mid_lbls,                       # "-1000–-500", …, "500–1000"  (12 items)
+  paste0(">", tail(finite_vals,1))# ">1000"
+)
+# check
+length(lbls)  # should be 14
+
+#–– cut into that factor
+r_df$delta_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+# Define the ggplot2 object with the gradient scale
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = delta_cat, na.rm = TRUE)) +
+  scale_fill_manual(name = "ΔPCWD [mm]",     values = c("Ocean" = "grey50", setNames(custom_colors, lbls)),
+    breaks = c("Ocean", lbls),
+    labels = c("Ocean", lbls),
+    na.value = "grey50")+
+    labs(title = "ModE-Sim - ERA5-Land", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=15), legend.text = element_text(size=15), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "ΔPCWD [mm]", reverse = TRUE))  # better for continuous legends(title = "ΔPCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+```
+### Trends over the same period
+
+ModESim trend calculation:
+```{r}
+#### 1968 - 2009 trends ModESim
+
+# Initialize an empty list to store results
+trend_results_ModESim <- list()
+
+# Iterate through each ensemble member
+for (ensemble_name in names(data_by_ensemble_1850_fil)) {
+  # Extract the data for the current ensemble member (3D array)
+  ensemble_data <- data_by_ensemble_1850_fil[[ensemble_name]]
+  
+  # Get dimensions
+  lon_dim <- dim(ensemble_data)[1]
+  lat_dim <- dim(ensemble_data)[2]
+  time_dim <- dim(ensemble_data)[3]
+  
+  # Create a data frame for regression: Reshape data into `grid_cell x time`
+  reshaped_data <- as.data.frame(
+    array(ensemble_data, dim = c(lon_dim * lat_dim, time_dim))
+  )
+  colnames(reshaped_data) <- 1:time_dim  # Name columns as time indices
+  
+  # Add grid cell indices
+  reshaped_data <- reshaped_data %>%
+    mutate(grid_id = 1:(lon_dim * lat_dim)) %>%
+    pivot_longer(
+      cols = -grid_id,
+      names_to = "time",
+      values_to = "value"
+    ) %>%
+    mutate(time = as.numeric(time))
+  
+# Perform linear regression for each grid cell and extract slope & p-value
+trends <- reshaped_data %>%
+  group_by(grid_id) %>%
+  summarize(
+    trend = coef(lm(value ~ time))[["time"]],  # Extract slope (trend)
+    p_value = summary(lm(value ~ time))$coefficients["time", "Pr(>|t|)"],  # Extract p-value
+    .groups = "drop"
+  )
+  
+  # Reshape trend data back into 2D array (lon x lat)
+  trend_matrix <- matrix(trends$trend, nrow = lon_dim, ncol = lat_dim)
+  
+  # Reshape p-value data back into 2D array (lon x lat)
+  p_matrix <- matrix(trends$p_value, nrow = lon_dim, ncol = lat_dim)
+  
+  # Store in results list
+  trend_results_ModESim[[ensemble_name]] <- list(trend = trend_matrix, p_value = p_matrix)
+}
+
+# Compute the mean trend
+mean_trend_ModESim <- Reduce("+", lapply(trend_results_ModESim, `[[`, "trend")) / length(trend_results_ModESim)
+
+# Compute the mean p-value
+mean_p_ModESim <- Reduce("+", lapply(trend_results_ModESim, `[[`, "p_value")) / length(trend_results_ModESim)
+
+# Create a significance mask (TRUE for significant, FALSE otherwise)
+sig_mask_ModESim <- mean_p_ModESim < 0.05
+
+
+```
+
+ERA5Land trend calculation: 
+```{r}
+pcwd_annmax_ERA5_fil_30 <- pcwd_annmax_ERA5[,,42:60] #last 30 years
+
+# Get dimensions
+lon_dim <- dim(pcwd_annmax_ERA5_fil_30)[1] #pcwd_annmax_ERA5_fil for overlap period with ModESim
+lat_dim <- dim(pcwd_annmax_ERA5_fil_30)[2]
+time_dim <- dim(pcwd_annmax_ERA5_fil_30)[3]
+  
+# Create a data frame for regression: Reshape data into `grid_cell x time`
+reshaped_data <- as.data.frame(
+  array(pcwd_annmax_ERA5_fil_30, dim = c(lon_dim * lat_dim, time_dim))
+  )
+colnames(reshaped_data) <- 1:time_dim  # Name columns as time indices
+  
+# Add grid cell indices
+reshaped_data <- reshaped_data %>%
+  mutate(grid_id = 1:(lon_dim * lat_dim)) %>%
+  pivot_longer(
+    cols = -grid_id,
+    names_to = "time",
+    values_to = "value"
+  ) %>%
+  mutate(time = as.numeric(time))
+  
+# Perform linear regression for each grid cell and extract slope & p-value
+trends <- reshaped_data %>%
+  group_by(grid_id) %>%
+  summarize(
+    trend = coef(lm(value ~ time))[["time"]],  # Extract slope (trend)
+    p_value = summary(lm(value ~ time))$coefficients["time", "Pr(>|t|)"],  # Extract p-value
+    .groups = "drop"
+  )
+  
+# Reshape trend data back into 2D array (lon x lat)
+trend_results_ERA5 <- matrix(trends$trend, nrow = lon_dim, ncol = lat_dim)
+# Reshape p-value data back into 2D array (lon x lat)
+p_matrix_ERA5 <- matrix(trends$p_value, nrow = lon_dim, ncol = lat_dim)
+
+# Create a significance mask (TRUE for significant, FALSE otherwise)
+sig_mask_ERA5 <- p_matrix_ERA5 < 0.05
+```
+
+plot both: 
+
+```{r}
+##### ModESim:
+# Convert data into a raster object
+r <- raster(t(mean_trend_ModESim), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Convert significance mask into a raster (same dimensions as trend)
+sig_r <- raster(t(sig_mask_ModESim), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(sig_r) <- "+proj=longlat +datum=WGS84"
+sig_r <- flip(sig_r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+sig_masked <- mask(sig_r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+sig_df <- as.data.frame(sig_masked, xy = TRUE)
+colnames(sig_df) <- c("x", "y", "sig")
+
+# Filter non-significant grid cells
+sig_df <- sig_df %>% filter(sig == 1)  # Retain only non-significant areas
+
+# Create the plot
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = layer), na.rm = TRUE) +  # Continuous fill
+  
+  # Continuous diverging blue-red color scale centered at zero with improved scaling
+  scale_fill_distiller(
+    palette = "RdBu", direction = -1,
+    limits = c(-25, 25), name = "trends", na.value = "grey50", values = scales::rescale(c(-10, -1, 0, 1, 10))
+  ) +
+  
+  labs(
+    title = "ModE-Sim", 
+    x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  # Overlay significant areas with hatching or stippling
+  geom_point(data = sig_df, aes(x = x, y = y, shape = "Significant"), 
+             size = 1.5, color = "#15B34C") +
+
+  scale_shape_manual(name = "", values = c("Significant" = 4)) +  # shape 4 = 'x'
+  
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.title = element_text(size=12), legend.text = element_text(size=12), 
+        axis.text = element_text(size=13), axis.title = element_text(size=13), legend.position = "none") +
+  guides(fill = guide_colorbar(title = "mm/yr"))
+
+
+###### ERA5Land data:
+# Convert data into a raster object
+r <- raster(t(trend_results_ERA5), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Convert significance mask into a raster (same dimensions as trend)
+sig_r <- raster(t(sig_mask_ERA5), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(sig_r) <- "+proj=longlat +datum=WGS84"
+sig_r <- flip(sig_r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+sig_masked <- mask(sig_r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+sig_df <- as.data.frame(sig_masked, xy = TRUE)
+colnames(sig_df) <- c("x", "y", "sig")
+
+# Filter non-significant grid cells
+sig_df <- sig_df %>% filter(sig == 1)  # Retain only non-significant areas
+
+# Create the plot
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = layer), na.rm = TRUE) +  # Continuous fill
+  
+  # Continuous diverging blue-red color scale centered at zero with improved scaling
+  scale_fill_distiller(
+    palette = "RdBu", direction = -1,
+    limits = c(-25, 25), name = "trends", na.value = "grey50", values = scales::rescale(c(-10, -1, 0, 1, 10))
+  ) +
+  
+  labs(
+    title = "ERA5-Land (1994-2024)", 
+    x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  # Overlay significant areas with hatching or stippling
+  #geom_point(data = sig_df, aes(x = x, y = y, shape = "Significant"), size = 3, color = "#15B34C") +
+
+  scale_shape_manual(name = "", values = c("Significant" = 4)) +  # shape 4 = 'x'
+  
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.title = element_text(size=12), legend.text = element_text(size=12), 
+        axis.text = element_text(size=13), axis.title = element_text(size=13), legend.position = "none") +
+  guides(fill = guide_colorbar(title = "mm/yr"))
+```
+
+### Annmax PCWD DOY
+
+Look at DOY of ERA5Land data: 
+
+```{r}
+#lat lon and time info from netcdf files
+##read in data
+input_file_doy <- "/storage/research/giub_geco/data_2/scratch/phelpap/ERA5Land_1950-2024/06_DOY/PCWD_ANNMAX_DOY.nc"
+
+nc_pwcd_doy <- nc_open(input_file_doy)
+annmax_doy = ncvar_get(nc_pwcd_doy, varid="pcwd_annmax_doy")
+lon = ncvar_get(nc_pwcd_doy, varid="lon")
+lat = ncvar_get(nc_pwcd_doy, varid="lat")
+time_doy = ncvar_get(nc_pwcd_doy, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_doy <- reference_date + time_doy
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_doy)
+
+# Filter data to retain only years up to 2009
+years <- as.numeric(format(time_dates_doy, "%Y"))
+keep_indices <- which(years <= 2009)
+
+# Subset time and data arrays
+time_dates_doy <- time_dates_doy[keep_indices]
+annmax_doy <- annmax_doy[,,keep_indices]  # Assuming time is the 3rd dimension
+
+
+nc_close(nc_pwcd_doy)
+
+# 3. Calculate the mean over the 431 years (3rd dimension)
+# This reduces the array to [192, 96] (longitude × latitude)
+era_mean_doy <- apply(annmax_doy, c(1, 2), mean, na.rm = TRUE)
+
+```
+
+```{r}
+### plot mean DOY of maximum deficit for each gridcell - 1420 epoch:
+
+#plot
+# Convert first year's data into a raster object
+r <- raster(t(era_mean_doy), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = layer), na.rm = TRUE) +
+  scale_fill_gradientn(
+    name = "DOY", 
+    colors = c("#3E4594", "#3D996B", "#FEE08B", "#D65C3C"),  # Seasonal transition
+    limits = c(1, 366), 
+    na.value = "grey50"
+  ) +
+  labs(title = "ERA5-Land", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+    theme(legend.title = element_text(size=12), legend.text = element_text(size=12), 
+        axis.text = element_text(size=13), axis.title = element_text(size=13), legend.position = "none") +
+  guides(fill = guide_colorbar(title = "DOY"))   # Improves legend readability
+
+```
+
+
+## Bias correcting ModE-Sim data: 
+- for 30 yr overlap period compare ERA5-Land and ModE-Sim; bias correct ModE-Sim in each grid cell based on that period
+
+1. Calculate ensemble mean for ModE-Sim 1850 and 1420 period: 
+
+```{r}
+#Calculate ensemble mean of ModESim: 
+ensemble_array_1850 <- simplify2array(data_by_ensemble_1850)  # Shape: [192, 96, 160, 20]
+
+# Compute the ensemble mean across the 4th dim (EMs)
+EM_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+dim(EM_1850)
+
+#Calculate ensemble mean of ModESim: 
+ensemble_array_1420 <- simplify2array(data_by_ensemble_1420)  # Shape: [192, 96, 160, 20]
+
+# Compute the ensemble mean across the 4th dim (EMs)
+EM_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)  # Shape: [192, 96, 160]
+dim(EM_1420)
+
+# Load abind package
+library(abind)
+
+# Merge along the 3rd dimension (time)
+EM_merged <- abind(EM_1420, EM_1850, along = 3)
+time_merged <-abind(time_1420, time_1850)
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_merged <- reference_date + time_merged
+
+```
+
+
+apply land masking
+```{r}
+#apply land mask to both ModE-Sim and ERA5-Land to make sure those areas are not bias corrected
+# Step 1: Create a land-sea mask from the natural earth dataset
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = "+proj=longlat +datum=WGS84")
+
+# Step 2: Create a grid with the same lon/lat as gini_values_1850
+grid_df <- expand.grid(lon = lon, lat = lat)
+
+# Step 3: Check which grid cells are land or ocean based on the land polygons
+grid_sf <- st_as_sf(grid_df, coords = c("lon", "lat"), crs = st_crs(land))
+
+# Step 4: Use `st_intersects` to check if each grid cell is land (1) or ocean (0)
+grid_sf$in_land <- st_intersects(grid_sf, land, sparse = FALSE) %>% rowSums() > 0  # TRUE for land, FALSE for ocean
+
+# Step 5: Create a land-sea mask based on the land check and ensure correct dimensions
+land_sea_mask <- matrix(grid_sf$in_land, nrow = 192, ncol = 96, byrow = FALSE)  # Corrected: 192 longitudes, 96 latitudes
+
+apply_land_mask <- function(grid_data, slm) {
+  # grid_data: 3D array [lon, lat, time]
+  # slm:    2D logical matrix [lon, lat] TRUE=land, FALSE=ocean
+
+  # Make a copy
+  masked_array <- grid_data
+
+  # Number of time steps
+  nt <- dim(grid_data)[3]
+
+  for (t in seq_len(nt)) {
+    # grab the lon×lat slice at time t
+    slice <- masked_array[ , , t]
+    # set ocean cells to NA
+    slice[!slm] <- NA
+    # put it back
+    masked_array[ , , t] <- slice
+  }
+
+  return(masked_array)
+}
+
+# Apply land-sea mask 
+EM_merged_masked <- apply_land_mask(EM_merged, land_sea_mask)
+pcwd_annmax_ERA5_masked <- apply_land_mask(pcwd_annmax_ERA5, land_sea_mask)
+```
+
+
+compute overlap period with ERA5 (1970-1999)
+```{r}
+## ERA5-Land
+# Filter data to retain overlap period
+years <- as.numeric(format(time_dates_ERA5, "%Y"))
+keep_indices <- which(years >= 1970 & years <= 1999)
+
+# Subset time and data arrays
+time_dates_ERA5_overlap <- time_dates_ERA5[keep_indices]
+pcwd_annmax_ERA5_overlap <- pcwd_annmax_ERA5_masked[,,keep_indices]  # Assuming time is the 3rd dimension
+
+## ModE-Sim 1965 - 1995 period
+# Find indices corresponding to years >= 1965 and <= 1995
+years <- as.numeric(format(time_dates_merged, "%Y"))
+keep_indices <- which(years >= 1970 & years <= 1999)
+# Subset time and data arrays
+time_dates_merged <- time_dates_merged[keep_indices]
+pcwd_annmax_merged_overlap <- EM_merged_masked[,,keep_indices]  # Assuming time is the 3rd dimension
+
+```
+
+```{r}
+library(qmap)
+library(future.apply)
+
+
+# Inputs (all 3D arrays of dimension [lon, lat, time]):
+#   pcwd_annmax_ERA5_masked    192×96×30  — ERA5‐Land overlap, NA over ocean
+#   pcwd_annmax_merged_masked  192×96×30  — ModE‐Sim overlap, NA over ocean
+#   pcwd_annmax_merged_full    192×96×590 — full ModE‐Sim run, already masked
+#
+# Output:
+#   pcwd_corrected             192×96×590 — bias‐corrected ModE‐Sim
+
+#---------------------------------------------------
+# 1) Prepare output array
+nlon <- dim(EM_merged_masked)[1]
+nlat <- dim(EM_merged_masked)[2]
+ntime <- dim(EM_merged_masked)[3]
+
+pcwd_corrected <- array(NA,
+                        dim = c(nlon, nlat, ntime),
+                        dimnames = dimnames(EM_merged_masked))
+
+#---------------------------------------------------
+# 2) Set up parallel plan (optional but recommended)
+plan(multisession)    # or multicore
+
+#---------------------------------------------------
+# 3) Loop over grid cells, fit & apply QM
+for (i in seq_len(nlon)) {
+  
+  # Run all latitudes in parallel, get a [ntime x nlat] matrix
+  mat_tm_by_lat <- future_sapply(seq_len(nlat), function(j) {
+    
+    obs_30   <- pcwd_annmax_ERA5_overlap[i, j, ]
+    mod_30   <- pcwd_annmax_merged_overlap[i, j, ]
+    mod_full <- EM_merged_masked[i, j, ]
+    
+    # Skip ocean cells
+    if (all(is.na(obs_30))) {
+      return(rep(NA_real_, ntime))
+    }
+    
+    # Fit on 30-year overlap
+    qm <- fitQmapPTF(
+      obs     = obs_30,
+      mod     = mod_30,
+      wet.day = FALSE,
+      qstep   = 0.001
+    )
+    
+    # Apply to full time series
+    doQmapPTF(
+      x      = mod_full,
+      fobj = qm
+    )
+    
+  }, USE.NAMES = FALSE)
+  
+  # Transpose to [nlat x ntime] before assigning
+  pcwd_corrected[i, , ] <- t(mat_tm_by_lat)
+}
+
+#save bias corrected ModE-SIm data: 
+saveRDS(pcwd_corrected, file="~/cwd_global/data/ModESim_grid_BiasCorrected.rds")
+```
+
+
+plot test plot to check bias correction
+```{r}
+#plot ERA5Land data to validate
+r <- raster(t(EM_merged_masked[,,531]), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+#r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249", 
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f", 
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+# Define the numeric labels for the breaks
+break_labels <- c(as.character(scales::label_number(accuracy = 1)(custom_bins[-length(custom_bins)])), "Ocean")
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Australia
+
+
+# Define the ggplot2 object with the gradient scale
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = custom_colors, na.value = "grey50", 
+                    labels = c(levels(cut(r_df$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "1950 ModESim before bias correction", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=18), legend.text = element_text(size=18), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+##################### bias corrected ModESim
+#plot ERA5Land data to validate
+r <- raster(t(pcwd_corrected[,,531]), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+#r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249", 
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f", 
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+# Define the numeric labels for the breaks
+break_labels <- c(as.character(scales::label_number(accuracy = 1)(custom_bins[-length(custom_bins)])), "Ocean")
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Australia
+
+
+# Define the ggplot2 object with the gradient scale
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = custom_colors, na.value = "grey50", 
+                    labels = c(levels(cut(r_df$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "1950 bias corrected ModESim", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=18), legend.text = element_text(size=18), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+################################################################################
+#plot ERA5Land data to validate
+r <- raster(t(pcwd_annmax_ERA5_masked[,,1]), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+#r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Define custom color bins
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249", 
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f", 
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+# Define the numeric labels for the breaks
+break_labels <- c(as.character(scales::label_number(accuracy = 1)(custom_bins[-length(custom_bins)])), "Ocean")
+
+# Define bounding box for Africa
+#bbox <- c(xmin = -30, xmax = 60, ymin = -35, ymax = 30)  # Approximate bounding box for Australia
+
+
+# Define the ggplot2 object with the gradient scale
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "mean PCWD (mm)", values = custom_colors, na.value = "grey50", 
+                    labels = c(levels(cut(r_df$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "1950 ERA5-Land", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=18), legend.text = element_text(size=18), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+```
+
+### Extreme value analysis on bias corrected values
+
+Calculate 5yr return period values for each gridcell for three periods
+- 1970 - 1999 (ERA5 data)
+- 1970 - 1999 (BC ModESim data)
+- 1800 - 1970 (BC ModESim - early ind)
+- 1420 - 1700 (BC ModESim - preind)
+
+```{r}
+#function to calculate return periods: 
+calculate_return_level <- function(data, return_period) {
+  # 1) Clean up
+  data <- na.omit(data)
+  
+  # 2) Skip too-short series
+  if (length(data) < 5) {
+    warning("Too few points to fit a Gumbel (n=", length(data), "). Returning NA.")
+    return(NA_real_)
+  }
+  
+  # 3) Constant series → return that constant
+  if (length(unique(data)) == 1) {
+    return(unique(data))
+  }
+  
+  # 4) Try the fit + return-level, catch any errors
+  out <- tryCatch({
+    evd_fit <- extRemes::fevd(x = data,
+                              type   = "Gumbel",
+                              method = "MLE",
+                              units  = "years")
+    rl <- extRemes::return.level(evd_fit,
+                                 return.period = return_period)
+    as.numeric(rl)
+  }, error = function(e) {
+    warning("Gumbel fit/return-level failed: ", e$message)
+    NA_real_
+  })
+  
+  return(out)
+}
+
+
+##ERA5 5 year return levels: 
+X5_ERA5 <- matrix(NA, nrow = length(lon), ncol = length(lat))
+
+for (i in seq_len(nlon)) {
+  for (j in seq_len(nlat)) {
+    # pull out the 30‐year overlap
+    raw_ts <- pcwd_annmax_ERA5_masked[i, j, 21:50]
+
+    # drop NA's
+    data <- raw_ts[!is.na(raw_ts)]
+
+    # skip ocean cells or too‐short records
+    if (length(data) < 10) next
+
+    # now safe to calculate the 5‐year return level
+    X5_ERA5[i, j] <- calculate_return_level(data,
+                                            return_period = 5)
+  }
+}
+
+
+##ModESim 5 year return levels: 
+# Create an empty matrix to store 5-year return levels
+X5_ModE_modern <- matrix(NA, nrow = length(lon), ncol = length(lat))
+
+# Loop through each grid cell
+for (i in seq_along(lon)) {
+  for (j in seq_along(lat)) {
+    # Extract time series for the grid cell
+    data <- pcwd_corrected[i, j, 551:580]
+    
+    # Check for NA or insufficient data
+   # if (all(is.na(data)) || length(na.omit(data)) < 10) next
+    
+    # Calculate 80-year return level
+    X5_ModE_modern[i, j] <- calculate_return_level(data, return_period = 5)
+  }
+}
+
+##ModESim early industrial 5 year return levels: 
+# Create an empty matrix to store 5-year return levels
+X5_ModE_early <- matrix(NA, nrow = length(lon), ncol = length(lat))
+
+# Loop through each grid cell
+for (i in seq_along(lon)) {
+  for (j in seq_along(lat)) {
+    # Extract time series for the grid cell
+    data <- pcwd_corrected[i, j, 381:450] #1800-1970
+    
+    # Check for NA or insufficient data
+   # if (all(is.na(data)) || length(na.omit(data)) < 10) next
+    
+    # Calculate 80-year return level
+    X5_ModE_early[i, j] <- calculate_return_level(data, return_period = 5)
+  }
+}
+
+##ModESim pre industrial 5 year return levels: 
+# Create an empty matrix to store 5-year return levels
+X5_ModE_pre <- matrix(NA, nrow = length(lon), ncol = length(lat))
+
+# Loop through each grid cell
+for (i in seq_along(lon)) {
+  for (j in seq_along(lat)) {
+    # Extract time series for the grid cell
+    data <- pcwd_corrected[i, j, 1:280]
+    
+    # Check for NA or insufficient data
+   # if (all(is.na(data)) || length(na.omit(data)) < 10) next
+    
+    # Calculate 80-year return level
+    X5_ModE_pre[i, j] <- calculate_return_level(data, return_period = 5)
+  }
+}
+
+
+```
+
+
+Plot 
+1) ERA5 calibration period (1970-1999) 5yr extreme events in each gridcell
+2) Early ind - modern (ModESim)
+3) Preind - modern (ModESim)
+```{r}
+#plot ERA5Land data to validate
+r <- raster(t(X5_ERA5), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+#r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249",
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f",
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+
+# 1) build a vector of human–readable labels
+#    for the finite intervals we do "a–b", 
+#    and then for the last one ">2000"
+finite_bins <- custom_bins[!is.infinite(custom_bins)]
+lbls_finite <- paste0(finite_bins[-length(finite_bins)], "–", finite_bins[-1])
+lbls <- c(lbls_finite, ">2000")
+
+# 2) turn your raster values into a factor with exactly these levels
+r_df$pcwd_cat <- cut(
+  r_df$layer, 
+  breaks = custom_bins, 
+  labels = lbls, 
+  include.lowest = TRUE, 
+  right = FALSE
+)
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pcwd_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "5yr PCWD (mm)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "ERA5-Land 5-yr event (reference)", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=18), legend.text = element_text(size=18), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+############################## compare to ModESim (BC) same period 
+#plot ERA5Land data to validate
+r <- raster(t(X5_ModE_modern), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+#r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249",
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f",
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+
+# 1) build a vector of human–readable labels
+#    for the finite intervals we do "a–b", 
+#    and then for the last one ">2000"
+finite_bins <- custom_bins[!is.infinite(custom_bins)]
+lbls_finite <- paste0(finite_bins[-length(finite_bins)], "–", finite_bins[-1])
+lbls <- c(lbls_finite, ">2000")
+
+# 2) turn your raster values into a factor with exactly these levels
+r_df$pcwd_cat <- cut(
+  r_df$layer, 
+  breaks = custom_bins, 
+  labels = lbls, 
+  include.lowest = TRUE, 
+  right = FALSE
+)
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pcwd_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "5yr PCWD (mm)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(title = "ModE-Sim modern", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=18), legend.text = element_text(size=18), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14), plot.title = element_text(face="bold")) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+##################### bias corrected ModESim early ind - modern 
+D_earlyind = X5_ModE_early - X5_ModE_modern
+#plot ERA5Land data to validate
+# Convert first year's data into a raster object
+r <- raster(t(D_earlyind), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# your breaks + palette
+custom_bins   <- c(-Inf, -1000,  -500,  -100,   -50,   -20,   -10,
+                    0,    10,     20,     50,    100,    500,   1000,  Inf)
+custom_colors <- colorRampPalette(c("blue", "white", "red"))(length(custom_bins)-1)
+
+#–– build the labels for all 14 bins
+finite_vals <- custom_bins[!is.infinite(custom_bins)]
+mid_lbls    <- paste0(finite_vals[-length(finite_vals)], "–", finite_vals[-1])
+
+lbls <- c(
+  paste0("<", finite_vals[1]),   # "<-1000"
+  mid_lbls,                       # "-1000–-500", …, "500–1000"  (12 items)
+  paste0(">", tail(finite_vals,1))# ">1000"
+)
+# check
+length(lbls)  # should be 14
+
+#–– cut into that factor
+r_df$delta_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+#–– 4) plot, forcing Ocean (NA) to the top
+ggplot() +
+  geom_raster(
+    data = r_df,
+    aes(x = x, y = y, fill = delta_cat),
+    na.rm = TRUE
+  ) +
+  scale_fill_manual(
+    name   = expression(Delta*" (5 yr PCWD [mm])"),
+    values = c("Ocean" = "grey50", setNames(custom_colors, lbls)),
+    breaks = c("Ocean", lbls),
+    labels = c("Ocean", lbls),
+    na.value = "grey50"
+  ) +
+  labs(title = "ΔModE-Sim (early-ind - reference)", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=18), legend.text = element_text(size=18), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "PCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+
+
+##################### bias corrected ModESim early ind - modern 
+D_preind = X5_ModE_pre - X5_ModE_modern
+#plot ERA5Land data to validate
+# Convert first year's data into a raster object
+r <- raster(t(D_preind), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# your breaks + palette
+custom_bins   <- c(-Inf, -1000,  -500,  -100,   -50,   -20,   -10,
+                    0,    10,     20,     50,    100,    500,   1000,  Inf)
+custom_colors <- colorRampPalette(c("blue", "white", "red"))(length(custom_bins)-1)
+
+#–– build the labels for all 14 bins
+finite_vals <- custom_bins[!is.infinite(custom_bins)]
+mid_lbls    <- paste0(finite_vals[-length(finite_vals)], "–", finite_vals[-1])
+
+lbls <- c(
+  paste0("<", finite_vals[1]),   # "<-1000"
+  mid_lbls,                       # "-1000–-500", …, "500–1000"  (12 items)
+  paste0(">", tail(finite_vals,1))# ">1000"
+)
+# check
+length(lbls)  # should be 14
+
+#–– cut into that factor
+r_df$delta_cat <- cut(
+  r_df$layer,
+  breaks         = custom_bins,
+  labels         = lbls,
+  include.lowest = TRUE,
+  right          = FALSE
+)
+
+#–– 4) plot, forcing Ocean (NA) to the top
+ggplot() +
+  geom_raster(
+    data = r_df,
+    aes(x = x, y = y, fill = delta_cat),
+    na.rm = TRUE
+  ) +
+  scale_fill_manual(
+    name   = expression(Delta*" (5 yr PCWD [mm])"),
+    values = c("Ocean" = "grey50", setNames(custom_colors, lbls)),
+    breaks = c("Ocean", lbls),
+    labels = c("Ocean", lbls),
+    na.value = "grey50"
+  ) +
+  labs(title = "ΔModE-Sim (pre-ind - reference)", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+  theme(legend.position = "none", legend.title = element_text(size=18), legend.text = element_text(size=18), 
+        axis.text = element_text(size=14), axis.title = element_text(size=14)) +
+  guides(fill = guide_legend(title = "ΔPCWD [mm]", reverse = TRUE))  # Adjust legend for better presentation
+```
+
+Plot ERA5-Land 5-year extreme values for validation
+```{r}
+##test plot for legend
+#plot ERA5Land data to validate
+r <- raster(t(X5_ERA5), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+#r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249",
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f",
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+
+# 1) build a vector of human–readable labels
+#    for the finite intervals we do "a–b", 
+#    and then for the last one ">2000"
+finite_bins <- custom_bins[!is.infinite(custom_bins)]
+lbls_finite <- paste0(finite_bins[-length(finite_bins)], "–", finite_bins[-1])
+lbls <- c(lbls_finite, ">2000")
+
+# 2) turn your raster values into a factor with exactly these levels
+r_df$pcwd_cat <- cut(
+  r_df$layer, 
+  breaks = custom_bins, 
+  labels = lbls, 
+  include.lowest = TRUE, 
+  right = FALSE
+)
+
+# 3) draw the plot, manually specifying levels, labels and colours
+ggplot() +
+  geom_raster(
+    data = r_df, 
+    aes(x = x, y = y, fill = pcwd_cat), 
+    na.rm = TRUE
+  ) +
+  # note we put "Ocean" *first* in the breaks, so it shows at the top
+  scale_fill_manual(
+    name      = "5yr PCWD (mm)",
+    values    = c("Ocean" = "grey50", setNames(custom_colors, lbls)), 
+    breaks    = c("Ocean", lbls),
+    labels    = c("Ocean", lbls),
+    na.value  = "grey50"
+  ) +
+  labs(
+    title = "ModE-Sim modern (1970-1999)",
+    x = "Longitude", y = "Latitude"
+  ) +
+  theme_classic(base_size = 14) +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(
+    xlim   = c(-180, 178.125),
+    ylim   = c(-60,   90),
+    expand = FALSE
+  ) +
+  theme(
+    legend.position   = "right",
+    legend.title      = element_text(size = 18),
+    legend.text       = element_text(size = 16)
+  ) +
+  guides(
+    fill = guide_legend(title = "PCWD [mm]", reverse = TRUE)
+  )
+```

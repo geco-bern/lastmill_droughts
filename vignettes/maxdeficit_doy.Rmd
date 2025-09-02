@@ -1,0 +1,419 @@
+---
+title: "PCWD annmax DOY analysis"
+author: "Patricia Helpap"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, echo=FALSE}
+library(readr)
+library(dplyr)
+library(here)
+library(lubridate)
+library(patchwork)
+library(ggplot2)
+library(cwd)
+library(ncdf4)
+library(reshape2)
+library(ggpubr)
+library(maps)
+library(raster)
+library(rnaturalearth)
+library(sf)
+library(rgdal)
+library(sp)
+library(RColorBrewer)
+library(rJava)
+library(loadeR.java)
+library(transformeR)
+library(loadeR)
+library(visualizeR)
+library(geoprocessoR)
+library(tidyverse)
+library(abind)
+library(patchwork)
+library(gridExtra)
+library(ggsci)
+```
+
+Read in data - 20 Ensemble members of global annmax PCWD DOY values
+
+Read in lat, lon and time info: 
+```{r}
+#lat lon and time info from netcdf files
+##read in data - stored on Ubelix server
+input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/06_DOY_1850/PCWD_ANNMAX_DOY.nc"
+input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/06_DOY_1420/PCWD_ANNMAX_DOY.nc"
+
+nc_pwcd_1850 <- nc_open(input_file_1850)
+annmax_doy_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax_doy")
+lon = ncvar_get(nc_pwcd_1850, varid="lon")
+lat = ncvar_get(nc_pwcd_1850, varid="lat")
+time_1850 = ncvar_get(nc_pwcd_1850, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_1850 <- reference_date + time_1850
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1850)
+
+#1420 file for 1420 time
+nc_pwcd_1420 <- nc_open(input_file_1420)
+annmax_doy_1420 = ncvar_get(nc_pwcd_1420, varid="pcwd_annmax_doy")
+time_1420 = ncvar_get(nc_pwcd_1420, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+time_dates_1420 <- reference_date + time_1420
+
+# # Print the resulting dates
+#print(annmax_doy_1420)
+
+nc_close(nc_pwcd_1420)
+```
+
+Aggregate 1420 files: 
+```{r}
+# Define the base path
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "06_DOY_1420/PCWD_ANNMAX_DOY.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_1420 <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "pcwd_annmax_doy"))[1]
+dim_y <- dim(ncvar_get(nc, "pcwd_annmax_doy"))[2]
+dim_z <- dim(ncvar_get(nc, "pcwd_annmax_doy"))[3]
+nc_close(nc)
+
+# Loop through all the target files and store the data in a list
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "pcwd_annmax_doy")  # Adjust "pcwd_annmax" to your variable name
+  
+  # Store the data in the list, keyed by the ensemble member
+  data_by_ensemble_1420[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_1420))  # Check stored ensemble members
+print(dim(data_by_ensemble_1420[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+
+Aggregate 1850 files: 
+```{r}
+# Define the base path
+path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/"
+
+# List all the directories within the base path
+folders <- list.files(path, full.names = TRUE)
+
+# Extract ensemble member identifiers from folder names
+ensemble_members <- basename(folders)
+
+# Identify the target files
+target_files <- file.path(folders, "06_DOY_1850/PCWD_ANNMAX_DOY.nc")
+target_files <- target_files[file.exists(target_files)]  # Ensure only existing files are included
+
+# Filter ensemble members to match target files
+ensemble_members <- ensemble_members[file.exists(target_files)]
+
+# Initialize a list to store data for each ensemble member
+data_by_ensemble_1850 <- list()
+
+# Extract dimensions from the first file to initialize the array size for consistency
+nc <- nc_open(target_files[1])
+dim_x <- dim(ncvar_get(nc, "pcwd_annmax_doy"))[1]
+dim_y <- dim(ncvar_get(nc, "pcwd_annmax_doy"))[2]
+dim_z <- dim(ncvar_get(nc, "pcwd_annmax_doy"))[3]
+nc_close(nc)
+
+# Loop through all the target files and store the data in a list
+for (i in seq_along(target_files)) {
+  file <- target_files[i]
+  member <- ensemble_members[i]
+  
+  # Open the NetCDF file
+  nc <- nc_open(file)
+  
+  # Extract the data variable
+  data <- ncvar_get(nc, "pcwd_annmax_doy")  # Adjust "pcwd_annmax" to your variable name
+  
+  # Store the data in the list, keyed by the ensemble member
+  data_by_ensemble_1850[[member]] <- data
+  
+  # Close the file
+  nc_close(nc)
+}
+
+# Output the structure of the data list
+print(names(data_by_ensemble_1850))  # Check stored ensemble members
+print(dim(data_by_ensemble_1850[[1]]))  # Check dimensions of the data for the first ensemble member
+
+```
+
+Combine into 4D array and calculate ensemble mean: 
+```{r}
+data_combined <- list()
+
+# Loop over each ensemble member
+for (i in names(data_by_ensemble_1420)) {
+  # Remove last year from 1420 dataset (assumes 3rd dimension is time)
+  data_1420_trimmed <- data_by_ensemble_1420[[i]][,,1:(dim(data_by_ensemble_1420[[i]])[3] - 1)]
+  
+  # Bind with 1850 data (all years)
+  data_combined[[i]] <- abind::abind(
+    data_1420_trimmed,
+    data_by_ensemble_1850[[i]],
+    along = 3
+  )
+}
+
+mean_ensemble_combined <- array(NA, dim = c(192, 96, 590))
+# Compute the mean over all ensemble members
+ensemble_array <- simplify2array(data_combined)  # Convert list to array
+mean_ensemble_combined <- apply(ensemble_array, c(1,2,3), mean, na.rm = TRUE) #time mean
+mean_over_time_comb <- apply(mean_ensemble_combined, c(1,2), mean)
+
+
+
+# Combine the list into a 4D array
+ensemble_array_1420 <- abind(data_by_ensemble_1420, along = 4)
+
+# Check dimensions of the resulting array
+dim(ensemble_array_1420)  # Should be [192, 96, 431, 19]
+
+# 2. Calculate the mean across all ensemble members (4th dimension)
+# This reduces the array to [192, 96, 431]
+ensemble_mean_1420 <- apply(ensemble_array_1420, c(1, 2, 3), mean, na.rm = TRUE)
+
+# 3. Calculate the mean over the 431 years (3rd dimension)
+# This reduces the array to [192, 96] (longitude × latitude)
+mean_over_time_1420 <- apply(ensemble_mean_1420, c(1, 2), mean, na.rm = TRUE)
+
+
+#### 1850 epoch ######
+
+# Combine the list into a 4D array
+ensemble_array_1850 <- abind(data_by_ensemble_1850, along = 4)
+
+# Check dimensions of the resulting array
+dim(ensemble_array_1850)  # Should be [192, 96, 431, 19]
+
+# 2. Calculate the mean across all ensemble members (4th dimension)
+# This reduces the array to [192, 96, 431]
+ensemble_mean_1850 <- apply(ensemble_array_1850, c(1, 2, 3), mean, na.rm = TRUE)
+
+# 3. Calculate the standard deviation over the 160 years (3rd dimension)
+# This reduces the array to [192, 96] (longitude × latitude)
+mean_over_time_1850 <- apply(ensemble_mean_1850, c(1, 2), mean, na.rm = TRUE)
+dim(mean_over_time_1850)
+
+```
+
+```{r}
+### plot mean DOY of maximum deficit for each gridcell - 1420 epoch:
+
+#plot
+# Convert first year's data into a raster object
+r <- raster(t(mean_over_time_1420), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = layer), na.rm = TRUE) +
+  scale_fill_gradientn(
+    name = "DOY", 
+    colors = c("#3E4594", "#3D996B", "#FEE08B", "#D65C3C"),  # Seasonal transition
+    limits = c(1, 365), 
+    na.value = "lightgrey"
+  ) +
+  labs(title = "Mean DOY of Max Deficit for 1420 Epoch", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  ) +
+  guides(fill = guide_colorbar(title = "DOY"))  # Improves legend readability
+
+```
+```{r}
+##### same plot for 1850 epoch: 
+#plot
+# Convert first year's data into a raster object
+r <- raster(t(mean_over_time_1850), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = layer), na.rm = TRUE) +
+  scale_fill_gradientn(
+    name = "DOY", 
+    colors = c("#313695", "#1a9850", "#fee08b", "#d73027"),  # Seasonal transition
+    limits = c(1, 365), 
+    na.value = "lightgrey"
+  ) +
+  labs(title = "Mean DOY of Max Deficit for 1850 Epoch", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  ) +
+  guides(fill = guide_colorbar(title = "DOY"))  # Improves legend readability
+
+```
+
+```{r}
+##### same plot for 600 years: 
+#plot
+# Convert first year's data into a raster object
+r <- raster(t(mean_over_time_comb), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = layer), na.rm = TRUE) +
+  scale_fill_gradientn(
+    name = "DOY", 
+    colors = c("#3E4594", "#3D996B", "#FEE08B", "#D65C3C"),  # Seasonal transition
+    limits = c(1, 365), 
+    na.value = "grey50"
+  ) +
+  labs(title = "Mean DOY of Annmax PCWD over 600 years", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.3) +
+  coord_sf(xlim =	c(-180, 178.125), ylim =	c(-60, 90), expand = FALSE) + #leave out Antarctica
+    theme(legend.title = element_text(size=13), legend.text = element_text(size=13), 
+        axis.text = element_text(size=13), axis.title = element_text(size=12)) +
+  guides(fill = guide_colorbar(title = "DOY"))  # Improves legend readability
+
+```
+
+Changes in DOY value: 
+
+```{r}
+delta_DOY = mean_over_time_1850 - mean_over_time_1420
+
+#plot
+# Convert first year's data into a raster object
+r <- raster(t(delta_DOY), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+# Create bins and convert to factor with explicit labels
+r_df$layer_binned <- cut(
+  r_df$layer, 
+  breaks = c(-30, -20, -10, -5, 5, 10, 20, 30, 50, 70, 80), 
+  include.lowest = TRUE
+)
+
+# Define color mapping based on bin levels
+bin_colors <- c(
+  "(-30,-20]" = "#313695",  # Deep blue
+  "(-20,-10]" = "#4575b4",  # Medium blue
+  "(-10,-5]"  = "#74add1",  # Light blue
+  "(-5,5]"    = "#ffffff",  # White (no change)
+  "(5,10]"    = "#fdae61",  # Light orange
+  "(10,20]"   = "#f46d43",  # Light red-orange
+  "(20,30]"   = "#d73027",  # Red
+  "(30,50]"   = "#b2182b",  # Dark red
+  "(70,80]"   = "#800026"   # Very dark red
+)
+
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = layer_binned), na.rm = TRUE) +
+  scale_fill_manual(
+    name = "Δ DOY", 
+    values = bin_colors, 
+    drop = FALSE,  # Keep all bins in legend
+    na.value = "lightgrey"  # Missing values in grey
+  ) +
+  labs(title = "Δ DOY of Max Deficit 1850-1420 epoch mean", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  ) +
+  guides(fill = guide_legend(title = "Δ DOY", reverse = TRUE))  # Flip legend order
+
+
+```
+
