@@ -1181,13 +1181,13 @@ plot_region_PCWD_ts <- function(region_code) {
       labels = c(
         "EMs - ModE-Sim*", "Mean - ModE-Sim*", "30-yr rolling\nmean - ModE-Sim*", "ERA5-Land", "EMs - max PCWD")
       ) +
-      scale_fill_manual(name ="Exceedances", values = c("drier" = "#F4DE70", "wetter" = "#136E40"),
-      labels = c("drier", "wetter")
+      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
+      labels = c("wetter", "drier")
     ) +
     labs(x = "Year", y = "PCWD [mm]", color = "Data") +
     theme_classic(base_size = 14) +
     theme(axis.title.y = element_text(margin=margin(r=10)),
-          legend.position="none", legend.title = element_text(face="bold"))
+          legend.position="right", legend.title = element_text(face="bold"))
   
   return(p_ts)
 }
@@ -1284,14 +1284,14 @@ den_MED
 ```
 ```{r}
 
-# ##### save legends
+##### save legends
 # ts_MED
 # ggsave(
 #   filename = here::here("figures/Annmax_PCWD_Timeseries_legend_wet.pdf"),
 #   plot     = ts_MED,
 #   device   = cairo_pdf,    # better text rendering
 #   width    = 10,           # in inches
-#   height   = 13,            # in inches
+#   height   = 8,            # in inches
 #   units    = "in",
 #   dpi      = 300,          # for raster elements (if any)
 #   bg       = "white"       # white background
