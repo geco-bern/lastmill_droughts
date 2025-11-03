@@ -13,12 +13,14 @@ knitr::opts_chunk$set(echo = TRUE)
 library(here)
 library(readr)
 library(dplyr)
+library(slider)
 library(lubridate)
 library(patchwork)
 library(ggplot2)
 library(ncdf4)
 library(reshape2)
 library(ggpubr)
+library(ggtext)
 library(maps)
 library(terra)
 library(rnaturalearth)
@@ -1080,16 +1082,17 @@ prepare_region_data <- function(region,
   )
 }
 
-# ------------------------------------------------------------------------------
-# Main plot function: with manual fill/color scales + legends restored
-# ------------------------------------------------------------------------------
-plot_region_PCWD <- function(region_code) {
+```
+
+```{r}
+#Timeseries function alone: 
+plot_region_PCWD_ts <- function(region_code) {
   
   dat <- prepare_region_data(region_code,
                              corrected_full,
                              regional_results_ERA5Land)
   
-  # 2) Compute anomalies + bounds + exceedance runs
+  # Compute anomalies + bounds + exceedance runs
   anoms_filtered <- anoms_long %>%
     filter(region == region_code) %>%
     group_by(time) %>%
@@ -1099,7 +1102,6 @@ plot_region_PCWD <- function(region_code) {
       .groups = "drop"
     )
   
-    # first-year mean
   first_mean <- anoms_filtered %>%
     arrange(time) %>%
     slice(1) %>%
@@ -1110,19 +1112,24 @@ plot_region_PCWD <- function(region_code) {
       lower_bound = first_mean - pooled_sd,
       upper_bound = first_mean + pooled_sd,
       exceeds     = mean_anomaly < lower_bound | mean_anomaly > upper_bound,
+      direction   = case_when(
+        mean_anomaly > upper_bound ~ "drier",
+        mean_anomaly < lower_bound ~ "wetter",
+        TRUE ~ NA_character_
+      ),
       run_id      = data.table::rleid(exceeds)
     )
   
   exceed_periods <- anoms_filtered %>%
     filter(exceeds) %>%
-    group_by(run_id) %>%
+    group_by(run_id, direction) %>%
     summarise(
       start = min(time),
       end   = max(time),
       .groups="drop"
     )
   
-    # 3) Filter running means for specified region
+  # Filter rolling means
   rolling_filtered <- rolling_means_long %>%
     filter(region == region_code) %>%
     group_by(time) %>%
@@ -1131,63 +1138,93 @@ plot_region_PCWD <- function(region_code) {
       .groups = "drop"
     )
   
-  # shared y‐limits & breaks
-  y_limits     <- range(c(dat$MODE_long$PCWD+50, dat$ERA5_df$PCWD+50), na.rm=TRUE) #adjust depending on region
+  # y-limits
+  y_limits     <- range(c(dat$MODE_long$PCWD, dat$ERA5_df$PCWD), na.rm=TRUE)
   common_breaks <- pretty(y_limits, n=6)
   
-  # 1) start with an empty ggplot
+  # Compute max of each ensemble for dotted lines
+  ensemble_max <- dat$MODE_long %>%
+    group_by(ensemble) %>%
+    summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+    mutate(label = "Ens_maximum")
+  
+  # Build ggplot
   p_ts <- ggplot()
   
-  # 2) add the grey bands first (if any)
+  # Exceedance rectangles colored by direction
   if (nrow(exceed_periods) > 0) {
     p_ts <- p_ts + 
       geom_rect(
         data = exceed_periods,
         aes(xmin = start, xmax = end, 
-            ymin = y_limits[1], ymax = y_limits[2]),
+            ymin = y_limits[1], ymax = y_limits[2],
+            fill = direction),
         inherit.aes = FALSE,
-        fill = "grey60", alpha = 0.5
-      )
+        alpha = 0.4
+      ) 
   }
-  
-  # 3) now add your PCWD & rolling‐mean lines
   p_ts <- p_ts +
-    geom_line(data = dat$MODE_long, aes(time, PCWD, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3,alpha = 0.3, show.legend = TRUE) +
+    geom_line(data = dat$MODE_long, aes(time, PCWD, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3, alpha=0.4) +
     geom_line(data = dat$MODE_mean, aes(time, PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
-    geom_line(data = rolling_filtered, aes(time, mean_rolling, color="rolling_mean"), linewidth=0.7) +   ###needs to be rolling means!
+    geom_line(data = rolling_filtered, aes(time, mean_rolling, color="rolling_mean"), linewidth=0.7) +
     geom_line(data = dat$ERA5_df, aes(time, PCWD, color = factor("ERA5")), linewidth = 0.8) +
+    geom_hline(data = ensemble_max, aes(yintercept = max_PCWD, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.3)+
     scale_y_continuous(limits=y_limits, breaks=common_breaks) +
-        # Manual color scale for legend
-  scale_color_manual(
-    values = c("EMs_ModE"  = "#7EA3CC",
-               "Mean_ModE" = "#255C99", "rolling_mean"="black", 
-               "ERA5"      = "#B3001B"),
-    labels = c( "EMs - ModE-Sim*", "Mean - ModE-Sim*","30-yr rolling\nmean - ModE-Sim*", "ERA5-Land")
-  )+
-  labs(title = "",
-       x = "Year", y = "PCWD [mm]", color = "Dataset") +  #change labelling depending on position in multipanel
-    theme_minimal(base_size=14) +
+    scale_color_manual(name = "Data",
+      values = c(
+        "EMs_ModE"  = "#7EA3CC",
+        "Mean_ModE" = "#255C99",
+        "rolling_mean"="black", 
+        "ERA5"      = "#B3001B", 
+        "Ens_maximum"= "grey30"
+      ),
+      labels = c(
+        "EMs - ModE-Sim*", "Mean - ModE-Sim*", "30-yr rolling\nmean - ModE-Sim*", "ERA5-Land", "EMs - max PCWD")
+      ) +
+      scale_fill_manual(name ="Exceedances", values = c("drier" = "#F4DE70", "wetter" = "#136E40"),
+      labels = c("drier", "wetter")
+    ) +
+    labs(x = "Year", y = "PCWD [mm]", color = "Data") +
+    theme_classic(base_size = 14) +
     theme(axis.title.y = element_text(margin=margin(r=10)),
           legend.position="none", legend.title = element_text(face="bold"))
+  
+  return(p_ts)
+}
 
-  # Density + legend
+ts_MED <- plot_region_PCWD_ts("NEU")
+ts_MED
+```
+
+```{r}
+#density plot function alone: 
+plot_region_PCWD_density <- function(region_code) {
+  
+  dat <- prepare_region_data(region_code,
+                             corrected_full,
+                             regional_results_ERA5Land)
+  
+  # # y-limits shared with time series if needed
+  # y_limits     <- range(c(min(dat$MODE_long$PCWD), max(dat$ERA5_df$PCWD)), na.rm=TRUE)
+  # common_breaks <- pretty(y_limits, n=6)
+  
   p_den <- ggplot() +
     geom_density(data = dat$MODE_full,
                  aes(y=PCWD, x=after_stat(density),
                      fill="ModESim_full", color="ModESim_full"),
-                 alpha=0.8, size=0.6) +
+                 alpha=0.8, size=0.6, trim = FALSE) +
     geom_density(data = dat$MODE_ref,
                  aes(y=PCWD, x=after_stat(density),
                      fill="ModESim_ref", color="ModESim_ref"),
-                 alpha=0.8, size=0.6) +
+                 alpha=0.8, size=0.6, trim = FALSE) +
     geom_density(data = dat$ERA5_ref,
                  aes(y=PCWD, x=after_stat(density),
                      fill="ERA5_70_99", color="ERA5_70_99"),
-                 alpha=0.6, size=0.6) +
+                 alpha=0.6, size=0.6, trim = FALSE) +
     geom_density(data = dat$ERA5_mod,
                  aes(y=PCWD, x=after_stat(density),
                      fill="ERA5_00_24", color="ERA5_00_24"),
-                 alpha=0.6, size=0.6) +
+                 alpha=0.6, size=0.6, trim = FALSE) +
     
     geom_hline(aes(yintercept=dat$rl$MODE_full,  color="ModESim_full_lin"),
                linetype="dashed", size=0.8) +
@@ -1198,9 +1235,8 @@ plot_region_PCWD <- function(region_code) {
     geom_hline(aes(yintercept=dat$rl$ERA5_mod,   color="ERA5_00_24_lin"),
                linetype="dashed", size=0.8) +
     
-    scale_y_continuous(limits=y_limits, breaks=common_breaks) +
     scale_fill_manual(
-      name   = "",
+      name   = "Period",
       values = c(
         ModESim_full  = "#255C99",
         ModESim_ref   = "#91C499",
@@ -1220,11 +1256,7 @@ plot_region_PCWD <- function(region_code) {
         ModESim_full_lin  = "#17385E",
         ModESim_ref_lin   = "#628567",
         ERA5_70_99_lin    = "#E8B5CC",
-        ERA5_00_24_lin    = "#870014",
-        ModESim_full      = "#255C99",
-        ModESim_ref       = "#91C499",
-        ERA5_70_99        = "#A25E8E",
-        ERA5_00_24        = "#B3001B"
+        ERA5_00_24_lin    = "#870014"
       ),
       labels = c(
         "ModE-Sim* (1420-1969)",
@@ -1233,8 +1265,8 @@ plot_region_PCWD <- function(region_code) {
         "ERA5-Land (2000-2024)"
       )
     ) +
-    labs(x="Density", y=NULL) +  #change labelling depending on position in multipanel
-    theme_minimal(base_size=14) +
+    labs(x="Density", y=NULL) +
+    theme_classic(base_size=14) +
     theme(
       plot.title     = element_text(hjust=0.5, face="bold"),
       legend.key     = element_rect(fill=NA, colour=NA),
@@ -1244,34 +1276,19 @@ plot_region_PCWD <- function(region_code) {
       legend.position = "none"
     )
   
-  # Combine side by side
-  cowplot::plot_grid(
-    p_ts, p_den,
-    ncol       = 2,
-    rel_widths = c(2.5, 1.),
-    align      = "h",
-    axis       = "tb",
-    labels     = "", 
-    # Push labels all the way to the left margin of each panel
-    label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
-    hjust   = 0,      # left‑justify the label text
-    # Tweak vertical positioning if you like
-    label_y = 0.98,   # just below the top
-    vjust   = 1       # align text at its top
-  ) 
+  return(p_den)
 }
 
-# Example:
-plot_MED <- plot_region_PCWD("MED")
-plot_ARP <- plot_region_PCWD("ARP")
-plot_WNA <- plot_region_PCWD("WNA")
-plot_CAU <- plot_region_PCWD("CAU")
+den_MED <- plot_region_PCWD_density("NEU")
+den_MED
+```
+```{r}
 
 # ##### save legends
-# p_ts
+# ts_MED
 # ggsave(
-#   filename = here::here("manuscript/Annmax_PCWD_Timeseries_legend.pdf"),
-#   plot     = p_ts,
+#   filename = here::here("figures/Annmax_PCWD_Timeseries_legend_wet.pdf"),
+#   plot     = ts_MED,
 #   device   = cairo_pdf,    # better text rendering
 #   width    = 10,           # in inches
 #   height   = 13,            # in inches
@@ -1280,10 +1297,10 @@ plot_CAU <- plot_region_PCWD("CAU")
 #   bg       = "white"       # white background
 # )
 # 
-# p_den
+# den_MED
 # ggsave(
-#   filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_legend.pdf"),
-#   plot     = p_den,
+#   filename = here::here("figures/Annmax_PCWD_Timeseries_Density_legend.pdf"),
+#   plot     = den_MED,
 #   device   = cairo_pdf,    # better text rendering
 #   width    = 10,           # in inches
 #   height   = 13,            # in inches
@@ -1291,38 +1308,55 @@ plot_CAU <- plot_region_PCWD("CAU")
 #   dpi      = 300,          # for raster elements (if any)
 #   bg       = "white"       # white background
 # )
-
 ```
+
 
 Combine multiple panels into one and save: 
 
 ```{r}
 ##for Fig. 1 in paper: 
 
+# Example:
+plot_MED_ts <- plot_region_PCWD_ts("MED")
+plot_MED_ts <- plot_MED_ts + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_ARP_ts <- plot_region_PCWD_ts("ARP")
+plot_WNA_ts <- plot_region_PCWD_ts("WNA")
+plot_CAU_ts <- plot_region_PCWD_ts("CAU")
+
+plot_MED_den <- plot_region_PCWD_density("MED")
+plot_MED_den <- plot_MED_den + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_ARP_den <- plot_region_PCWD_density("ARP")
+plot_WNA_den <- plot_region_PCWD_density("WNA")
+plot_CAU_den <- plot_region_PCWD_density("CAU")
+
+
 combined2all <- plot_grid(
-  plot_MED, plot_WNA, plot_ARP, plot_CAU,
+  plot_MED_ts,plot_MED_den, plot_WNA_ts, plot_WNA_den, plot_ARP_ts,plot_ARP_den, plot_CAU_ts,
+     plot_CAU_den,
   nrow        = 4,
-  ncol        = 1,
+  ncol        = 2,
   align       = "h",
   axis        = "tb",
   labels      = c(
-    "a) MED – Mediterranean", 
-    "b) WNA – Western North America", 
-    "c) ARP – Arabian Peninsula", 
-    "d) CAU – Central Australia" 
+    "a) MED – Mediterranean",  "e)", 
+    "b) WNA – Western North America", "f)",
+    "c) ARP – Arabian Peninsula", "g)",
+    "d) CAU – Central Australia","h)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
   hjust   = 0,      # left‑justify the label text
   # Tweak vertical positioning if you like
-  label_y = 0.98,   # just below the top
-  vjust   = 1       # align text at its top
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1),
+  expand      = TRUE  
 )
 
 print(combined2all)
 
 ggsave(
-  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Fig.pdf"),
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Fig.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1338,36 +1372,43 @@ Plot by continent for supplementary material:
 ```{r}
 
 ##EUROPE
-plot_NEU <- plot_region_PCWD("NEU")
-plot_WCE <- plot_region_PCWD("WCE")
-plot_EEU <- plot_region_PCWD("EEU")
-plot_MED <- plot_region_PCWD("MED")
+plot_NEU_ts <- plot_region_PCWD_ts("NEU")
+plot_NEU_ts <- plot_NEU_ts + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_WCE_ts <- plot_region_PCWD_ts("WCE")
+plot_EEU_ts <- plot_region_PCWD_ts("EEU")
+plot_MED_ts <- plot_region_PCWD_ts("MED")
 
+plot_NEU_den <- plot_region_PCWD_density("NEU")
+plot_NEU_den <- plot_NEU_den + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_WCE_den <- plot_region_PCWD_density("WCE")
+plot_EEU_den <- plot_region_PCWD_density("EEU")
+plot_MED_den <- plot_region_PCWD_density("MED")
 
 combined2all <- plot_grid(
-  plot_NEU, plot_WCE, plot_EEU, plot_MED,
+  plot_NEU_ts, plot_NEU_den, plot_WCE_ts,plot_WCE_den, plot_EEU_ts, plot_EEU_den,plot_MED_ts,plot_MED_den,
   nrow        = 4,
-  ncol        = 1,
+  ncol        = 2,
   align       = "h",
   axis        = "tb",
   labels      = c(
-    "a) EUROPE - NEU", 
-    "b) EUROPE - WCE", 
-    "c) EUROPE - EEU", 
-    "d) EUROPE - MED" 
+    "a) EUROPE - NEU", "e)",
+    "b) EUROPE - WCE", "f)",
+    "c) EUROPE - EEU", "g)",
+    "d) EUROPE - MED" , "h)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
   hjust   = 0,      # left‑justify the label text
   # Tweak vertical positioning if you like
-  label_y = 0.98,   # just below the top
-  vjust   = 1       # align text at its top
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1)
 )
 
 print(combined2all)
 
 ggsave(
-  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Europe.pdf"),
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Europe.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1378,40 +1419,50 @@ ggsave(
 )
 
 ###NORTH AMERICA
-plot_NWN <- plot_region_PCWD("NWN")
-plot_NEN <- plot_region_PCWD("NEN")
-plot_WNA <- plot_region_PCWD("WNA")
-plot_CNA <- plot_region_PCWD("CNA")
-plot_ENA <- plot_region_PCWD("ENA")
-plot_GIC <- plot_region_PCWD("GIC")
+plot_NWN <- plot_region_PCWD_ts("NWN")
+plot_NWN <- plot_NWN+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_NEN <- plot_region_PCWD_ts("NEN")
+plot_WNA <- plot_region_PCWD_ts("WNA")
+plot_CNA <- plot_region_PCWD_ts("CNA")
+plot_ENA <- plot_region_PCWD_ts("ENA")
+plot_GIC <- plot_region_PCWD_ts("GIC")
+
+plot_NWN_den <- plot_region_PCWD_density("NWN")
+plot_NWN_den <- plot_NWN_den + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_NEN_den <- plot_region_PCWD_density("NEN")
+plot_WNA_den <- plot_region_PCWD_density("WNA")
+plot_CNA_den <- plot_region_PCWD_density("CNA")
+plot_ENA_den <- plot_region_PCWD_density("ENA")
+plot_GIC_den <- plot_region_PCWD_density("GIC")
 
 
 combined2all <- plot_grid(
-  plot_NWN, plot_NEN, plot_WNA, plot_CNA,plot_ENA, plot_GIC,
+  plot_NWN,plot_NWN_den, plot_NEN,plot_NEN_den, plot_WNA,plot_WNA_den, plot_CNA,plot_CNA_den,plot_ENA, plot_ENA_den,plot_GIC,plot_GIC_den,
   nrow        = 6,
-  ncol        = 1,
+  ncol        = 2,
   align       = "h",
   axis        = "tb",
   labels      = c(
-    "a) NORTH AMERICA - NWN", 
-    "b) NORTH AMERICA - NEN", 
-    "c) NORTH AMERICA - WNA", 
-    "d) NORTH AMERICA - CNA",
-    "e) NORTH AMERICA - ENA",
-    "f) NORTH AMERICA - GIC"
+    "a) NORTH AMERICA - NWN", "g)",
+    "b) NORTH AMERICA - NEN", "h)",
+    "c) NORTH AMERICA - WNA", "i)",
+    "d) NORTH AMERICA - CNA", "j)",
+    "e) NORTH AMERICA - ENA", "k)",
+    "f) NORTH AMERICA - GIC", "l)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
   hjust   = 0,      # left‑justify the label text
   # Tweak vertical positioning if you like
-  label_y = 0.98,   # just below the top
-  vjust   = 1       # align text at its top
+  label_y = 0.978,   # just below the top
+  vjust   = 1,       # align text at its top,
+  rel_widths = c(2, 1)
 )
 
 print(combined2all)
 
 ggsave(
-  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_NorthAmerica.pdf"),
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_NorthAmerica.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1423,45 +1474,58 @@ ggsave(
 
 
 #### AFRICA
-plot_SAH <- plot_region_PCWD("SAH")
-plot_WAF <- plot_region_PCWD("WAF")
-plot_CAF <- plot_region_PCWD("CAF")
-plot_NEAF <- plot_region_PCWD("NEAF")
-plot_SEAF <- plot_region_PCWD("SEAF")
-plot_WSAF <- plot_region_PCWD("WSAF")
-plot_ESAF <- plot_region_PCWD("ESAF")
-plot_MDG <- plot_region_PCWD("MDG")
+plot_SAH <- plot_region_PCWD_ts("SAH")
+plot_SAH <- plot_SAH+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_WAF <- plot_region_PCWD_ts("WAF")
+plot_CAF <- plot_region_PCWD_ts("CAF")
+plot_NEAF <- plot_region_PCWD_ts("NEAF")
+plot_SEAF <- plot_region_PCWD_ts("SEAF")
+plot_WSAF <- plot_region_PCWD_ts("WSAF")
+plot_ESAF <- plot_region_PCWD_ts("ESAF")
+plot_MDG <- plot_region_PCWD_ts("MDG")
+
+plot_SAH_den <- plot_region_PCWD_density("SAH")
+plot_SAH_den <- plot_SAH_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_WAF_den <- plot_region_PCWD_density("WAF")
+plot_CAF_den <- plot_region_PCWD_density("CAF")
+plot_NEAF_den <- plot_region_PCWD_density("NEAF")
+plot_SEAF_den <- plot_region_PCWD_density("SEAF")
+plot_WSAF_den <- plot_region_PCWD_density("WSAF")
+plot_ESAF_den <- plot_region_PCWD_density("ESAF")
+plot_MDG_den <- plot_region_PCWD_density("MDG")
 
 
 
 combined2all <- plot_grid(
-  plot_SAH, plot_WAF, plot_CAF, plot_NEAF,plot_SEAF, plot_WSAF,plot_ESAF, plot_MDG,
+  plot_SAH,plot_SAH_den, plot_WAF, plot_WAF_den,plot_CAF,plot_CAF_den, plot_NEAF,plot_NEAF_den,
+  plot_SEAF, plot_SEAF_den,plot_WSAF,plot_WSAF_den,plot_ESAF,plot_ESAF_den, plot_MDG,plot_MDG_den,
   nrow        = 8,
-  ncol        = 1,
+  ncol        = 2,
   align       = "h",
   axis        = "tb",
   labels      = c(
-    "a) AFRICA - SAH", 
-    "b) AFRICA - WAF", 
-    "c) AFRICA - CAF", 
-    "d) AFRICA - NEAF",
-    "e) AFRICA - SEAF",
-    "f) AFRICA - WSAF", 
-    "g) AFRICA - ESAF",
-    "h) AFRICA - MDG"
+    "a) AFRICA - SAH", "i)",
+    "b) AFRICA - WAF", "j)",
+    "c) AFRICA - CAF", "k)",
+    "d) AFRICA - NEAF", "l)",
+    "e) AFRICA - SEAF", "m)",
+    "f) AFRICA - WSAF", "n)",
+    "g) AFRICA - ESAF", "o)",
+    "h) AFRICA - MDG", "p)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
   hjust   = 0,      # left‑justify the label text
   # Tweak vertical positioning if you like
   label_y = 0.98,   # just below the top
-  vjust   = 1       # align text at its top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1)
 )
 
 print(combined2all)
 
 ggsave(
-  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Africa.pdf"),
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Africa.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1473,38 +1537,47 @@ ggsave(
 
 
 #### Asia
-plot_WCA <- plot_region_PCWD("WCA")
-plot_ARP <- plot_region_PCWD("ARP")
-plot_WSB <- plot_region_PCWD("WSB")
-plot_RAR <- plot_region_PCWD("RAR")
-plot_ESB <- plot_region_PCWD("ESB")
+plot_WCA <- plot_region_PCWD_ts("WCA")
+plot_WCA <- plot_WCA+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_ARP <- plot_region_PCWD_ts("ARP")
+plot_WSB <- plot_region_PCWD_ts("WSB")
+plot_RAR <- plot_region_PCWD_ts("RAR")
+plot_ESB <- plot_region_PCWD_ts("ESB")
+
+plot_WCA_den <- plot_region_PCWD_density("WCA")
+plot_WCA_den <- plot_WCA_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_ARP_den <- plot_region_PCWD_density("ARP")
+plot_WSB_den <- plot_region_PCWD_density("WSB")
+plot_RAR_den <- plot_region_PCWD_density("RAR")
+plot_ESB_den <- plot_region_PCWD_density("ESB")
 
 
 combined2all <- plot_grid(
-  plot_WCA, plot_ARP, plot_WSB, plot_RAR,plot_ESB,
+  plot_WCA, plot_WCA_den,plot_ARP,plot_ARP_den, plot_WSB, plot_WSB_den,plot_RAR,plot_RAR_den,plot_ESB,plot_ESB_den,
   nrow        = 5,
-  ncol        = 1,
+  ncol        = 2,
   align       = "h",
   axis        = "tb",
   labels      = c(
-    "a) ASIA - WCA", 
-    "b) ASIA - ARP", 
-    "c) ASIA - WSB", 
-    "d) ASIA - RAR",
-    "e) ASIA - ESB"
+    "a) ASIA - WCA", "f)",
+    "b) ASIA - ARP", "g)",
+    "c) ASIA - WSB", "h)",
+    "d) ASIA - RAR", "i)",
+    "e) ASIA - ESB", "j)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
   hjust   = 0,      # left‑justify the label text
   # Tweak vertical positioning if you like
-  label_y = 0.98,   # just below the top
-  vjust   = 1       # align text at its top
+  label_y = 0.975,   # just below the top
+  vjust   = 1  ,     # align text at its top
+rel_widths = c(2, 1)
 )
 
 print(combined2all)
 
 ggsave(
-  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Asia1.pdf"),
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Asia1.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1516,39 +1589,49 @@ ggsave(
 
 
 ###ASIA continued
-plot_ECA <- plot_region_PCWD("ECA")
-plot_TIB <- plot_region_PCWD("TIB")
-plot_SAS <- plot_region_PCWD("SAS")
-plot_EAS <- plot_region_PCWD("EAS")
-plot_RFE <- plot_region_PCWD("RFE")
-plot_SEA <- plot_region_PCWD("SEA")
+plot_ECA <- plot_region_PCWD_ts("ECA")
+plot_ECA <- plot_ECA+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_TIB <- plot_region_PCWD_ts("TIB")
+plot_SAS <- plot_region_PCWD_ts("SAS")
+plot_EAS <- plot_region_PCWD_ts("EAS")
+plot_RFE <- plot_region_PCWD_ts("RFE")
+plot_SEA <- plot_region_PCWD_ts("SEA")
+
+plot_ECA_den <- plot_region_PCWD_density("ECA")
+plot_ECA_den <- plot_ECA_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_TIB_den <- plot_region_PCWD_density("TIB")
+plot_SAS_den <- plot_region_PCWD_density("SAS")
+plot_EAS_den <- plot_region_PCWD_density("EAS")
+plot_RFE_den <- plot_region_PCWD_density("RFE")
+plot_SEA_den <- plot_region_PCWD_density("SEA")
 
 combined2all <- plot_grid(
-  plot_ECA, plot_TIB, plot_SAS, plot_EAS,plot_RFE,plot_SEA,
+  plot_ECA, plot_ECA_den, plot_TIB,plot_TIB_den, plot_SAS,plot_SAS_den, plot_EAS,plot_EAS_den, plot_RFE,plot_RFE_den,plot_SEA,plot_SEA_den,
   nrow        = 6,
-  ncol        = 1,
+  ncol        = 2,
   align       = "h",
   axis        = "tb",
   labels      = c(
-    "a) ASIA - ECA", 
-    "b) ASIA - TIB", 
-    "c) ASIA - SAS", 
-    "d) ASIA - EAS",
-    "e) ASIA - RFE", 
-    "f) ASIA - SEA"
+    "a) ASIA - ECA", "g)",
+    "b) ASIA - TIB", "h)",
+    "c) ASIA - SAS", "i)",
+    "d) ASIA - EAS", "j)",
+    "e) ASIA - RFE", "k)",
+    "f) ASIA - SEA", "l)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
   hjust   = 0,      # left‑justify the label text
   # Tweak vertical positioning if you like
-  label_y = 0.98,   # just below the top
-  vjust   = 1       # align text at its top
+  label_y = 0.975,   # just below the top
+  vjust   = 1 ,      # align text at its top
+  rel_widths = c(2, 1)
 )
 
 print(combined2all)
 
 ggsave(
-  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Asia2.pdf"),
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Asia2.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1559,33 +1642,40 @@ ggsave(
 )
 
 ####CENTRAL AMERICA
-plot_NCA <- plot_region_PCWD("NCA")
-plot_SCA <- plot_region_PCWD("SCA")
-plot_CAR <- plot_region_PCWD("CAR")
+plot_NCA <- plot_region_PCWD_ts("NCA")
+plot_NCA <- plot_NCA+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_SCA <- plot_region_PCWD_ts("SCA")
+plot_CAR <- plot_region_PCWD_ts("CAR")
+
+plot_NCA_den <- plot_region_PCWD_density("NCA")
+plot_NCA_den <- plot_NCA_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_SCA_den <- plot_region_PCWD_density("SCA")
+plot_CAR_den <- plot_region_PCWD_density("CAR")
 
 combined2all <- plot_grid(
-  plot_NCA, plot_SCA, plot_CAR,
+  plot_NCA, plot_NCA_den,plot_SCA,plot_SCA_den, plot_CAR,plot_CAR_den,
   nrow        = 3,
-  ncol        = 1,
+  ncol        = 2,
   align       = "h",
   axis        = "tb",
   labels      = c(
-    "a) CENTRAL AMERICA - NCA", 
-    "b) CENTRAL AMERICA - SCA", 
-    "c) CENTRAL AMERICA - CAR"
+    "a) CENTRAL AMERICA - NCA", "d)",
+    "b) CENTRAL AMERICA - SCA", "e)",
+    "c) CENTRAL AMERICA - CAR", "f)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
   hjust   = 0,      # left‑justify the label text
   # Tweak vertical positioning if you like
-  label_y = 0.98,   # just below the top
-  vjust   = 1       # align text at its top
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+rel_widths = c(2, 1)
 )
 
 print(combined2all)
 
 ggsave(
-  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_CentralAmerica.pdf"),
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_CentralAmerica.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1597,42 +1687,53 @@ ggsave(
 
 
 ###SOUTH AMERICA
-plot_NWS <- plot_region_PCWD("NWS")
-plot_NSA <- plot_region_PCWD("NSA")
-plot_NES <- plot_region_PCWD("NES")
-plot_SAM <- plot_region_PCWD("SAM")
-plot_SWS <- plot_region_PCWD("SWS")
-plot_SES <- plot_region_PCWD("SES")
-plot_SSA <- plot_region_PCWD("SSA")
+plot_NWS <- plot_region_PCWD_ts("NWS")
+plot_NWS <- plot_NWS+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_NSA <- plot_region_PCWD_ts("NSA")
+plot_NES <- plot_region_PCWD_ts("NES")
+plot_SAM <- plot_region_PCWD_ts("SAM")
+plot_SWS <- plot_region_PCWD_ts("SWS")
+plot_SES <- plot_region_PCWD_ts("SES")
+plot_SSA <- plot_region_PCWD_ts("SSA")
+
+plot_NWS_den <- plot_region_PCWD_density("NWS")
+plot_NWS_den <- plot_NWS_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_NSA_den <- plot_region_PCWD_density("NSA")
+plot_NES_den <- plot_region_PCWD_density("NES")
+plot_SAM_den <- plot_region_PCWD_density("SAM")
+plot_SWS_den <- plot_region_PCWD_density("SWS")
+plot_SES_den <- plot_region_PCWD_density("SES")
+plot_SSA_den <- plot_region_PCWD_density("SSA")
 
 
 combined2all <- plot_grid(
-  plot_NWS, plot_NSA, plot_NES,plot_SAM, plot_SWS, plot_SES, plot_SSA,
+  plot_NWS,plot_NWS_den, plot_NSA, plot_NSA_den,plot_NES,plot_NES_den,plot_SAM,plot_SAM_den, plot_SWS,plot_SWS_den, plot_SES,plot_SES_den, plot_SSA,plot_SSA_den,
   nrow        = 7,
-  ncol        = 1,
+  ncol        = 2,
   align       = "h",
   axis        = "tb",
   labels      = c(
-    "a) SOUTH AMERICA - NWS", 
-    "b) SOUTH AMERICA - NSA", 
-    "c) SOUTH AMERICA - NES",
-    "d) SOUTH AMERICA - SAM",
-    "e) SOUTH AMERICA - SWS",
-    "f) SOUTH AMERICA - SES",
-    "g) SOUTH AMERICA - SSA"
+    "a) SOUTH AMERICA - NWS", "h)",
+    "b) SOUTH AMERICA - NSA", "i)",
+    "c) SOUTH AMERICA - NES", "j)",
+    "d) SOUTH AMERICA - SAM", "k)",
+    "e) SOUTH AMERICA - SWS", "l)",
+    "f) SOUTH AMERICA - SES", "m)",
+    "g) SOUTH AMERICA - SSA", "n)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
   hjust   = 0,      # left‑justify the label text
   # Tweak vertical positioning if you like
-  label_y = 0.98,   # just below the top
-  vjust   = 1       # align text at its top
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1)
 )
 
 print(combined2all)
 
 ggsave(
-  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_SouthAmerica.pdf"),
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_SouthAmerica.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
@@ -1644,38 +1745,46 @@ ggsave(
 
 
 ###AUSTRALIA
-plot_NAU <- plot_region_PCWD("NAU")
-plot_CAU <- plot_region_PCWD("CAU")
-plot_EAU <- plot_region_PCWD("EAU")
-plot_SAU <- plot_region_PCWD("SAU")
-plot_NZ <- plot_region_PCWD("NZ")
+plot_NAU <- plot_region_PCWD_ts("NAU")
+plot_NAU <- plot_NAU+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_CAU <- plot_region_PCWD_ts("CAU")
+plot_EAU <- plot_region_PCWD_ts("EAU")
+plot_SAU <- plot_region_PCWD_ts("SAU")
+plot_NZ <- plot_region_PCWD_ts("NZ")
 
+plot_NAU_den <- plot_region_PCWD_density("NAU")
+plot_NAU_den <- plot_NAU_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_CAU_den <- plot_region_PCWD_density("CAU")
+plot_EAU_den <- plot_region_PCWD_density("EAU")
+plot_SAU_den <- plot_region_PCWD_density("SAU")
+plot_NZ_den <- plot_region_PCWD_density("NZ")
 
 combined2all <- plot_grid(
-  plot_NAU, plot_CAU, plot_EAU, plot_SAU,plot_NZ,
+  plot_NAU, plot_NAU_den,plot_CAU,plot_CAU_den, plot_EAU, plot_EAU_den,plot_SAU,plot_SAU_den, plot_NZ,plot_NZ_den,
   nrow        = 5,
-  ncol        = 1,
+  ncol        = 2,
   align       = "h",
   axis        = "tb",
   labels      = c(
-    "a) AUSTRALIA - NAU", 
-    "b) AUSTRALIA - CAU", 
-    "c) AUSTRALIA - EAU", 
-    "d) AUSTRALIA - SAU",
-    "e) AUSTRALIA - NZ"
+    "a) AUSTRALIA - NAU", "f)",
+    "b) AUSTRALIA - CAU", "g)",
+    "c) AUSTRALIA - EAU", "h)",
+    "d) AUSTRALIA - SAU", "i)",
+    "e) AUSTRALIA - NZ", "j)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
   hjust   = 0,      # left‑justify the label text
   # Tweak vertical positioning if you like
-  label_y = 0.98,   # just below the top
-  vjust   = 1       # align text at its top
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1)
 )
 
 print(combined2all)
 
 ggsave(
-  filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_all_Australia.pdf"),
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Australia.pdf"),
   plot     = combined2all,
   device   = cairo_pdf,    # better text rendering
   width    = 10,           # in inches
