@@ -1146,6 +1146,7 @@ plot_region_PCWD_ts <- function(region_code) {
   ensemble_max <- dat$MODE_long %>%
     group_by(ensemble) %>%
     summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+    summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
     mutate(label = "Ens_maximum")
   
   # Build ggplot
@@ -1168,7 +1169,7 @@ plot_region_PCWD_ts <- function(region_code) {
     geom_line(data = dat$MODE_mean, aes(time, PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
     geom_line(data = rolling_filtered, aes(time, mean_rolling, color="rolling_mean"), linewidth=0.7) +
     geom_line(data = dat$ERA5_df, aes(time, PCWD, color = factor("ERA5")), linewidth = 0.8) +
-    geom_hline(data = ensemble_max, aes(yintercept = max_PCWD, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.3)+
+    geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
     scale_y_continuous(limits=y_limits, breaks=common_breaks) +
     scale_color_manual(name = "Data",
       values = c(
@@ -1179,7 +1180,7 @@ plot_region_PCWD_ts <- function(region_code) {
         "Ens_maximum"= "grey30"
       ),
       labels = c(
-        "EMs - ModE-Sim*", "Mean - ModE-Sim*", "30-yr rolling\nmean - ModE-Sim*", "ERA5-Land", "EMs - max PCWD")
+        "EMs - ModE-Sim*", "Mean - ModE-Sim*", "30-yr rolling\nmean - ModE-Sim*", "ERA5-Land", "ModE-Sim* - max PCWD")
       ) +
       scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
       labels = c("wetter", "drier")
@@ -1187,12 +1188,12 @@ plot_region_PCWD_ts <- function(region_code) {
     labs(x = "Year", y = "PCWD [mm]", color = "Data") +
     theme_classic(base_size = 14) +
     theme(axis.title.y = element_text(margin=margin(r=10)),
-          legend.position="right", legend.title = element_text(face="bold"))
+          legend.position="none", legend.title = element_text(face="bold"))
   
   return(p_ts)
 }
 
-ts_MED <- plot_region_PCWD_ts("NEU")
+ts_MED <- plot_region_PCWD_ts("MED")
 ts_MED
 ```
 
@@ -1204,9 +1205,9 @@ plot_region_PCWD_density <- function(region_code) {
                              corrected_full,
                              regional_results_ERA5Land)
   
-  # # y-limits shared with time series if needed
-  # y_limits     <- range(c(min(dat$MODE_long$PCWD), max(dat$ERA5_df$PCWD)), na.rm=TRUE)
-  # common_breaks <- pretty(y_limits, n=6)
+  # y-limits
+  y_limits     <- range(c(dat$MODE_long$PCWD, dat$ERA5_df$PCWD), na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
   
   p_den <- ggplot() +
     geom_density(data = dat$MODE_full,
@@ -1237,6 +1238,7 @@ plot_region_PCWD_density <- function(region_code) {
     
     scale_fill_manual(
       name   = "Period",
+      breaks = c("ModESim_full", "ModESim_ref", "ERA5_70_99", "ERA5_00_24"),
       values = c(
         ModESim_full  = "#255C99",
         ModESim_ref   = "#91C499",
@@ -1252,6 +1254,7 @@ plot_region_PCWD_density <- function(region_code) {
     ) +
     scale_color_manual(
       name   = "5-year Event",
+      breaks = c("ModESim_full_lin", "ModESim_ref_lin", "ERA5_70_99_lin", "ERA5_00_24_lin"),
       values = c(
         ModESim_full_lin  = "#17385E",
         ModESim_ref_lin   = "#628567",
@@ -1274,12 +1277,13 @@ plot_region_PCWD_density <- function(region_code) {
       text           = element_text(size=14),
       axis.title.y   = element_text(margin=margin(r=10)),
       legend.position = "none"
-    )
+    )+
+    scale_y_continuous(limits = y_limits, breaks = common_breaks)
   
   return(p_den)
 }
 
-den_MED <- plot_region_PCWD_density("NEU")
+den_MED <- plot_region_PCWD_density("MED")
 den_MED
 ```
 ```{r}
@@ -3004,8 +3008,8 @@ scatter_overlap <- ggplot(df_overlap, aes(x = mod_mean, y = era, color = contine
     y     = "ERA5-Land 5yr PCWD [mm]",
     color = "Continent"
   ) +
-  scale_x_continuous(limits = c(0, 2000, 500)) +
-  scale_y_continuous(limits = c(0, 2000, 500)) +
+  #scale_x_continuous(limits = c(0, 2000, 500)) +
+  #scale_y_continuous(limits = c(0, 2000, 500)) +
   theme_classic() +
   theme(
     legend.position    = "none",
@@ -3162,6 +3166,17 @@ ggsave(
 )
 
 ```
+```{r}
+# Calculate the correlation and mean bias between ERA5-Land and ModE-Sim* 5-year events during overlap 
+summary_stats <- tibble(
+  correlation = cor(df_overlap$era, df_overlap$mod_mean, use = "complete.obs"),
+  mean_bias   = mean(df_overlap$mod_mean - df_overlap$era, na.rm = TRUE)
+)
+
+summary_stats
+
+```
+
 
 #### Same thing but comparing historic extremes to modern times and *30 yr* events
 Scatterplots for 4 periods:
@@ -3969,7 +3984,7 @@ map_all
 ```
 
 
-Figure 2: Scatter plot comparing 30 yr drought magnitudes and exceedance maps
+Preparatory analysis for Figure 2: Scatter plot comparing 30 yr drought magnitudes and exceedance maps
 
 ```{r}
 
@@ -4470,8 +4485,8 @@ gg1 <- tmp |>
   labs(
     x = "ERA5 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[unprecedented]) == .(n_greater) ~ ", " ~ 
-                      italic(N[record-shattering]) == .(n_shattering)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("record-shattering")]) == .(n_shattering)),
     title = ""
   )+  theme(
     legend.position = c(0.05, 0.95),   # inside top-left
@@ -4619,8 +4634,8 @@ gg2 <- tmp |>
   labs(
     x = "ModE-Sim 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[unprecedented]) == .(n_greater) ~ ", " ~ 
-                      italic(N[record-shattering]) == .(n_shattering)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("record-shattering")]) == .(n_shattering)),
     title = "   "
   )
 
@@ -4736,8 +4751,8 @@ gg3 <- tmp |>
   labs(
     x = "ModE-Sim 1850-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[unprecedented]) == .(n_greater) ~ ", " ~ 
-                      italic(N[record-shattering]) == .(n_shattering)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("record-shattering")]) == .(n_shattering)),
     title = "   "
   )
 
@@ -4851,8 +4866,8 @@ gg4 <- tmp |>
   labs(
     x = "ModE-Sim 1420-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[unprecedented]) == .(n_greater) ~ ", " ~ 
-                      italic(N[record-shattering]) == .(n_shattering)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("record-shattering")]) == .(n_shattering)),
     title = "   "
   )
 
@@ -4968,7 +4983,12 @@ df_modesim_30x_pooled_recent <- df_modesim_30x_pooled |>
 
 ```{r}
 tmp <- df_era5_30x |> 
-  mutate(is_greater = pcwd_x30_ref0 < pcwd_x30_ref1)
+  mutate(is_greater = pcwd_x30_ref0 < pcwd_x30_ref1,
+  color_cat = case_when(
+      is_greater ~ "exceeding",
+      TRUE ~ "within"
+    ))
+
 
 n_greater <- tmp |> 
   ungroup() |> 
@@ -4976,20 +4996,25 @@ n_greater <- tmp |>
   pull(n_greater)
 
 gg5 <- tmp |> 
-  ggplot(aes(pcwd_x30_ref0, pcwd_x30_ref1, color = is_greater)) +
-  geom_point(size = 0.9, show.legend = FALSE) +
+  ggplot(aes(pcwd_x30_ref0, pcwd_x30_ref1, color = color_cat)) +
+  geom_point(size = 0.9, show.legend = TRUE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
-  scale_color_manual(values = c("#301934", "#91C499")) +
+    scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                "exceeding" = "#6099FA")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
   labs(
     x = "ERA5 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[unprecedented]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
     title = ""
-  )
+  ) + theme(
+    legend.position = c(0.05, 0.95),   # inside top-left
+    legend.justification = c("left", "top"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold"))
 
 gg5
 ```
@@ -5009,7 +5034,11 @@ df_30x_pooled_recent <- df_modesim_30x_pooled_recent |>
 
 ```{r}
 tmp <- df_30x_pooled_recent |> 
-  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0)
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0,
+  color_cat = case_when(
+      is_greater ~ "exceeding",
+      TRUE ~ "within"
+    ))
 
 n_greater <- tmp |> 
   ungroup() |> 
@@ -5017,18 +5046,19 @@ n_greater <- tmp |>
   pull(n_greater)
 
 gg6 <- tmp |> 
-  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = is_greater)) +
-  geom_point(show.legend = FALSE, size = 0.9) +
+  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = color_cat)) +
+  geom_point(size = 0.9, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
-  scale_color_manual(values = c("#301934", "#91C499")) +
+    scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                "exceeding" = "#6099FA")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
   labs(
     x = "ModE-Sim 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[unprecedented]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
     title = "   "
   )
 
@@ -5049,7 +5079,11 @@ df_30x_pooled_historical <- df_modesim_30x_pooled_historical |>
 
 ```{r}
 tmp <- df_30x_pooled_historical |> 
-  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0)
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0,
+  color_cat = case_when(
+      is_greater ~ "exceeding",
+      TRUE ~ "within"
+    ))
 
 n_greater <- tmp |> 
   ungroup() |> 
@@ -5057,18 +5091,19 @@ n_greater <- tmp |>
   pull(n_greater)
 
 gg7 <- tmp |> 
-  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = is_greater)) +
-  geom_point(show.legend = FALSE, size = 0.9) +
+  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = color_cat)) +
+  geom_point(size = 0.9, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
-  scale_color_manual(values = c("#301934", "#91C499")) +
+    scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                "exceeding" = "#6099FA")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
   labs(
     x = "ModE-Sim 1850-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[unprecedented]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
     title = "   "
   )
 
@@ -5089,7 +5124,11 @@ df_30x_pooled_multicent <- df_modesim_30x_pooled_multicent |>
 
 ```{r}
 tmp <- df_30x_pooled_multicent |> 
-  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0)
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_x30_ref0,
+  color_cat = case_when(
+      is_greater ~ "exceeding",
+      TRUE ~ "within"
+    ))
 
 n_greater <- tmp |> 
   ungroup() |> 
@@ -5097,18 +5136,19 @@ n_greater <- tmp |>
   pull(n_greater)
 
 gg8 <- tmp |> 
-  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = is_greater)) +
-  geom_point(show.legend = FALSE, size = 0.9) +
+  ggplot(aes(x = pcwd_x30_ref0, y = pcwd_x30_ref1, color = color_cat)) +
+  geom_point(size = 0.9, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
-  scale_color_manual(values = c("#301934", "#91C499")) +
+    scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                "exceeding" = "#6099FA")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
   labs(
     x = "ModE-Sim 1420-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[unprecedented]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
     title = "   "
   )
 
@@ -5169,6 +5209,10 @@ row4 <- plot_grid(
   label_x = 0.1,  # left side
   label_y = 1   # top
   )
+```
+```{r}
+# print(row1)
+# ggsave(here("figures/test.pdf"), plot = row1, width = 14, height = 7)
 ```
 
 
