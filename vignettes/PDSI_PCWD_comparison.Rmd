@@ -1,0 +1,2543 @@
+---
+title: "PDSI_PCWD_comparison"
+author: "Patricia Helpap"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, echo=FALSE}
+library(here)
+library(readr)
+library(dplyr)
+library(slider)
+library(lubridate)
+library(patchwork)
+library(ggplot2)
+library(ncdf4)
+library(reshape2)
+library(ggpubr)
+library(ggtext)
+library(maps)
+library(terra)
+library(rnaturalearth)
+library(sf)
+library(sp)
+library(RColorBrewer)
+library(tidyverse)
+library(abind)
+library(patchwork)
+library(gridExtra)
+library(ggsci)
+library(purrr)
+library(qmap)
+library(cowplot)
+library(extRemes)
+library(ggpattern)
+
+
+### load relevant libraries:
+library(dplyr)
+library(rJava)
+library(loadeR.java)
+library(transformeR)
+library(loadeR)
+library(visualizeR)
+#library(geoprocessoR)
+
+```
+
+```{r}
+## test read in one ensemble member
+##read in data - stored on Ubelix server
+PDSI_recon_01 <- "/Users/phelpap/Documents/lastmilldroughts_data/scPDSI_AWC_recon/ModE-Sim_m001_PDSI_1420-2009.nc" ### monthly data - we have annual max PCWD so one value per year - keep monthly here to evaluate the timing aspect of PCWD
+
+nc_test <- nc_open(PDSI_recon_01)
+var = ncvar_get(nc_test, varid="pdsi")
+lon = ncvar_get(nc_test, varid="longitude")
+lat = ncvar_get(nc_test, varid="latitude")
+time = ncvar_get(nc_test, varid="time")
+# Convert to actual dates (days since 1970-1-1)
+reference_date <- as.Date("1970-01-01")
+time_dates <- reference_date + time
+
+# # Print the resulting dates
+print(nc_test)
+
+nc_close(nc_test)
+```
+
+
+
+```{r}
+### Create regional areas for PDSI 
+
+########### Script for data post-processing to create regional averages (see IPCC regions, AR6) ###########
+### read in IPCC Region information:
+#Load reference regions and coastlines:
+load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
+
+#simplify this object by converting it to a SpatialPolygons class object (i.e., only the polygons are retained and their attributes discarded):
+refregions <- as(IPCC_WGI_reference_regions_v4, "SpatialPolygons")
+
+# # List of regions to loop over --- excludes ocean basins
+# regions <- c("GIC", "NWN", "NEN", "WNA", "CNA", "ENA", "NCA", "SCA", "CAR", "NWS",
+#              "NSA", "NES", "SAM", "SWS", "SES", "SSA", "NEU", "WCE", "EEU", "MED",
+#              "SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG", "RAR", "WSB",
+#              "ESB", "RFE", "WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "NAU",
+#              "CAU", "EAU", "SAU", "NZ")
+regions <- c("GIC") # for testing
+
+#as before but loop over all regions also, saving everything in an array
+path <- "/Users/phelpap/Documents/lastmilldroughts_data/scPDSI_AWC_recon"
+files <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020 in first set
+
+# Extract unique ensemble member identifiers from folder names
+#ensemble_members <- regmatches(basename(files), regexpr("m[0-9]{3}", basename(files)))
+ensemble_members <- "m001"
+
+########## for 1420 to 2009, AWC recon data ###########################
+
+# Initialize a list to store results for all regions
+regional_results_AWC_recon <- list()
+
+# Loop over all regions
+for (region in regions) {
+  # Extract the spatial object corresponding to the current region
+  region_object <- refregions[c(region)]
+
+  # Check if the subset is valid
+  if (is.null(region_object)) {
+    warning(paste("Region not found:", region))
+    next
+  }
+
+  # Initialize a list to store spatial averages for each file in the current region
+  spatial_avg_list <- list()
+
+  for (i in seq_along(files)) {
+    file <- files[i]          # full path, used for loading
+    em   <- ensemble_members[i]  # clean ID like "m001", used as list key
+
+    # Check if both files exist
+    if (file.exists(file)) {
+      # Load grid data for each time period
+      grid <- loadGridData(dataset = file, var = "pdsi")
+
+      # Set spatial projection
+      grid <- setGridProj(grid = grid, proj = proj4string(refregions))
+
+      # Extract bounding box from region polygon
+      bbox <- bbox(region_object)
+      
+      # Crop to bounding box
+      grid_region <- subsetGrid(grid,
+                                 lonLim = c(bbox["x", "min"], bbox["x", "max"]),
+                                 latLim = c(bbox["y", "min"], bbox["y", "max"]),
+                                 outside = FALSE)
+
+      # Mask to actual polygon shape (not just bounding box rectangle)
+      coords <- getCoordinates(grid_region)
+      points_sp <- SpatialPoints(expand.grid(coords$x, coords$y),
+                                  proj4string = CRS(proj4string(refregions)))
+      inside <- !is.na(over(points_sp, region_object))
+      inside_matrix <- matrix(inside, nrow = length(coords$x), ncol = length(coords$y))
+      inside_matrix <- t(inside_matrix)  # now [lat x lon] to match grid_region$Data[t, lat, lon]
+      
+      for (t in 1:dim(grid_region$Data)[1]) {
+        grid_region$Data[t, , ][!inside_matrix] <- NA
+      }
+      
+      # Spatial average ignoring masked NAs
+      spatial_avg <- apply(grid_region$Data, 1, function(slice) {
+        mean(slice, na.rm = TRUE)
+      })
+      spatial_avg_list[[em]] <- spatial_avg  # keyed by "m001", "m002", etc.
+      
+    } else {
+      warning(paste("Missing data for ensemble member:", em))
+    }
+  }
+  # Combine all spatial averages into a single array for the current region
+  result_array_region <- do.call(cbind, spatial_avg_list)
+
+  # Store the result for the current region
+  regional_results_AWC_recon[[region]] <- result_array_region
+}
+#save calculated list
+saveRDS(regional_results_AWC_recon, file= here::here("data/regionalResults_scPDSI_1420_2009_AWCrecon_test.RData")) #AWCrecon 
+```
+
+```{r}
+### sanity check:
+library(sp)
+library(ggplot2)
+
+# Load one grid and get coordinates
+grid <- loadGridData(dataset = files[1], var = "pdsi")
+grid <- setGridProj(grid = grid, proj = proj4string(refregions))
+coords <- getCoordinates(grid)
+
+# Get region name for each grid point (returns NA if outside all regions)
+region_hit <- over(points_sp, refregions)  # returns the polygon attribute/name
+grid_pts$region <- as.character(region_hit)  # NA for ocean/outside
+
+# Extract timestep 1 PDSI
+timestep1 <- grid$Data[1, , ]
+grid_pts$pdsi <- as.vector(t(timestep1))
+
+# Plot 1: which region each point belongs to
+ggplot() +
+  geom_point(data = grid_pts, aes(x = lon, y = lat, color = region), size = 0.8) +
+  geom_polygon(data = region_df, aes(x = long, y = lat, group = group),
+               fill = NA, color = "black", linewidth = 0.4) +
+  coord_quickmap() +
+  theme_classic() +
+  theme(legend.position = "none") +  # too many regions for a readable legend
+  labs(title = "Grid points coloured by IPCC AR6 region")
+
+# Plot 2: PDSI field with all region boundaries
+ggplot() +
+  geom_point(data = grid_pts, aes(x = lon, y = lat, color = pdsi), size = 1.2) +
+  geom_polygon(data = region_df, aes(x = long, y = lat, group = group),
+               fill = NA, color = "black", linewidth = 0.4) +
+  scale_color_distiller(palette = "RdBu", na.value = "grey90",
+                        name = "PDSI", limits = c(-4, 4)) +
+  coord_quickmap() +
+  theme_classic() +
+  labs(title = "PDSI timestep 1 with all IPCC AR6 region boundaries",
+       x = "Longitude", y = "Latitude")
+```
+
+
+```{r}
+# ##################################### Code verification
+
+# Load relevant libraries
+library(dplyr)
+library(rJava)
+library(loadeR.java)
+library(transformeR)
+library(loadeR)
+library(visualizeR)
+library(raster)
+library(terra)
+library(ncdf4)
+library(rnaturalearth)
+library(sf)
+library(ggplot2)
+library(viridis) # For better color scale
+#
+# total_cells <- length(land_sea_mask)
+# ocean_cells <- sum(!land_sea_mask)
+# land_cells <- sum(land_sea_mask)
+#
+# cat("Total Grid Cells:", total_cells, "\n")
+# cat("Land Cells:", land_cells, "(", round(land_cells / total_cells * 100, 2), "% )\n")
+# cat("Ocean Cells:", ocean_cells, "(", round(ocean_cells / total_cells * 100, 2), "% )\n")
+#
+
+# Select one ensemble member for testing
+test_em <- ensemble_members[1]
+
+test_file = files[1]
+
+## apply land sea mask on one time step for testing
+# Load data using loadGridData (keeping consistency with your approach)
+grid_test <- loadGridData(dataset = test_file, var = "pdsi")
+grid_array_test <- grid_test$Data
+test_array <- grid_array_test[1,,]
+test_array[!land_sea_mask] <- NA
+
+
+# Create a copy of the original data to store masked values
+masked_grid_array <- grid_array_test
+
+# Loop over the time dimension
+for (t in 1:dim(grid_array_test)[1]) {
+  masked_grid_array[t, , ][!land_sea_mask] <- NA
+}
+
+# The masked data retains the same 3D structure
+masked_grid_array
+
+
+test_array_2 <- apply_land_mask(grid_test, land_sea_mask)
+test_array_plot <- test_array_2$Data
+plot_data <- test_array_plot[1,,]
+
+
+### test with raw pdsi - maybe already land masked? 
+
+r <- raster(t(var[,,4]), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84" # Set CRS for raster
+#r <- flip(r, direction='y') #Flip the raster to correct orientation
+#Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs=st_crs(r)) #Ensure CRS alignment
+#Mask the raster with land polygons to remove ocean values
+#r_masked <- mask(r, as(land, "Spatial"))
+#Convert the masked raster to a dataframe for ggplot
+r_df <- as.data.frame(r, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")
+
+# Create ggplot
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = layer), na.rm = TRUE) +
+  scale_fill_viridis_c(option = "C", na.value = "white") +  # Use Viridis color scale
+  labs(title = "PDSI", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +  # Overlay coastlines
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(legend.title = element_text(size = 12), legend.text = element_text(size = 10)) +
+  guides(fill = guide_colorbar(title = "PDSI", reverse = FALSE))
+```
+
+
+Analyse final time series for the four regions considered: 
+```{r}
+## read in produced regional file 
+regional_test_PDSI_AWCrecon <- readRDS(here::here("data/regionalResults_scPDSI_1420_2009_AWCrecon.RData"))
+regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+regions_present <- intersect(names(regional_test_PDSI_AWCrecon), regions_to_modify)
+
+regional_test_PDSI_AWCrecon[regions_present] <- lapply(
+  regional_test_PDSI_AWCrecon[regions_present],
+  function(x) x[, colnames(x) != "m001", drop = FALSE]
+)
+
+regional_test_PDSI_AWC100 <- readRDS(here::here("data/regionalResults_scPDSI_1420_2009_AWC100_test.RData"))
+regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+regions_present <- intersect(names(regional_test_PDSI_AWC100), regions_to_modify)
+
+regional_test_PDSI_AWC100[regions_present] <- lapply(
+  regional_test_PDSI_AWC100[regions_present],
+  function(x) x[, colnames(x) != "m001", drop = FALSE]
+)
+```
+
+
+```{r}
+### read in the not-bias corrected PCWD data: 
+
+### read in ModE-Sim regional results
+regional_results_1420 <- readRDS(here::here("data/regionalResults_1420_1.RData"))
+regional_results_1850 <- readRDS(here::here("data/regionalResults_1850_1.RData"))
+merged_results <- Map(rbind, regional_results_1420, regional_results_1850) # Stitch matrices together row-wise for each region
+
+regions <- c("GIC", "ARP", "MED", "WNA", "CAU")
+regional_PCWD <- merged_results[regions]
+
+regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+regions_present <- intersect(names(regional_PCWD), regions_to_modify)
+
+regional_PCWD[regions_present] <- lapply(
+  regional_PCWD[regions_present],
+  function(x) x[, colnames(x) != "m001_tidy", drop = FALSE]
+)
+
+
+
+### calculate anomalies for highlighting wet and dry periods
+# Initialize list to store rolling 30-year means
+rolling_means <- list()
+
+# Define window size
+window_size <- 30
+
+# Compute rolling means for each ensemble member
+for (region_name in names(regional_PCWD)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_PCWD[[region_name]][2:590,]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means[[region_name]] <- rolling_mean_matrix
+}
+
+rolling_means_PCWD_long <-  do.call(rbind, lapply(names(rolling_means), function(region) {
+  df <- as.data.frame(rolling_means[[region]])
+  df$time <- seq(1436, 1995)  # Adjust time range accordingly
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
+  return(df_long)
+}))
+
+```
+
+600 year anomalies with full period as baseline 
+
+```{r}
+# Initialize lists to store baselines
+anom_baseline <- list()
+
+# Compute baseline mean over all values of rolling mean
+for (region_name in names(rolling_means)) {
+  rolling_mean_matrix <- rolling_means[[region_name]]
+  
+  anom_baseline[[region_name]] <- mean(rolling_mean_matrix[1:560,], na.rm = TRUE)  ### for reference period of first 30 values: rolling_mean_matrix[1:30,]
+}
+
+# Initialize lists to store anomalies
+ensemble_30anom <- list()
+
+# Compute anomalies
+for (region_name in names(rolling_means)) {
+  rolling_mean_matrix <- rolling_means[[region_name]]
+  num_years <- nrow(rolling_mean_matrix)
+  
+  # Initialize matrix to store anomalies
+  anoms <- matrix(NA, nrow=num_years, ncol=ncol(rolling_mean_matrix))
+  
+  # Compute anomalies using rolling mean baseline
+  for (t in 1:num_years) {
+    anoms[t, ] <- (rolling_mean_matrix[t, ] - anom_baseline[[region_name]])
+  }
+  
+  # Store results
+  ensemble_30anom[[region_name]] <- anoms
+}
+
+# Compute mean anomalies across ensemble members
+mean_30anom <- list()
+for (region_name in names(ensemble_30anom)) {
+  mean_30anom[[region_name]] <- rowMeans(ensemble_30anom[[region_name]], na.rm = TRUE)
+}
+
+# Compute region-specific pooled standard deviation all years
+pooled_sd_by_region <- list()
+for (region_name in names(ensemble_30anom)) {
+  # Extract all years of anomalies
+  all_years <- ensemble_30anom[[region_name]][1:560,]
+  
+  # Compute pooled standard deviation over these values
+  pooled_sd_by_region[[region_name]] <- sd(unlist(all_years), na.rm = TRUE)
+}
+
+# Convert ensemble data into a long format for plotting individual members
+anoms_long <- do.call(rbind, lapply(names(ensemble_30anom), function(region) {
+  df <- as.data.frame(ensemble_30anom[[region]])
+  df$time <- seq(1436, 1995)  # Adjust time range accordingly
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "anomalies")
+  return(df_long)
+}))
+
+```
+
+```{r}
+
+# ------------------------------------------------------------------------------
+# Helper: prepare data
+# ------------------------------------------------------------------------------
+prepare_region_data <- function(region,
+                                regional_PCWD,
+                                mode_years = 1420:2009,
+                                drop_initial_years = 2) {
+  MODE_mat <- regional_PCWD[[region]]
+  
+  # Time‐series data
+  MODE_long <- MODE_mat %>%
+    as.data.frame() %>%
+    mutate(time = mode_years) %>%
+    pivot_longer(-time, names_to = "ensemble", values_to = "PCWD")
+  
+  MODE_mean <- MODE_long %>% group_by(time) %>% summarise(PCWD = mean(PCWD, na.rm=TRUE), .groups="drop")
+  
+  # ———————— drop the first `drop_initial_years` rows ————————
+  MODE_long <- MODE_long %>% 
+    filter(time >= mode_years[drop_initial_years])
+  
+  MODE_mean <- MODE_mean %>% 
+    filter(time >= mode_years[drop_initial_years])
+  # ——————————————————————————————————————————————————————————————
+    list(
+    MODE_long   = MODE_long,
+    MODE_mean   = MODE_mean
+  )
+}
+
+
+#Timeseries function alone: 
+plot_region_PCWD_ts <- function(region_code) {
+  
+  dat <- prepare_region_data(region_code,
+                             regional_PCWD)
+  
+  # Compute anomalies + bounds + exceedance runs
+  anoms_filtered <- anoms_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      mean_anomaly = mean(anomalies, na.rm=TRUE),
+      pooled_sd    = pooled_sd_by_region[[region_code]],
+      .groups = "drop"
+    )
+  
+  first_mean <- anoms_filtered %>%
+    arrange(time) %>%
+    slice(1) %>%
+    pull(mean_anomaly)
+  
+  anoms_filtered <- anoms_filtered %>%
+    mutate(
+      lower_bound = first_mean - pooled_sd,
+      upper_bound = first_mean + pooled_sd,
+      exceeds     = mean_anomaly < lower_bound | mean_anomaly > upper_bound,
+      direction   = case_when(
+        mean_anomaly > upper_bound ~ "drier",
+        mean_anomaly < lower_bound ~ "wetter",
+        TRUE ~ NA_character_
+      ),
+      run_id      = data.table::rleid(exceeds)
+    )
+  
+  exceed_periods <- anoms_filtered %>%
+    filter(exceeds) %>%
+    group_by(run_id, direction) %>%
+    summarise(
+      start = min(time),
+      end   = max(time),
+      .groups="drop"
+    )
+  
+  # Filter rolling means
+  rolling_filtered <- rolling_means_PCWD_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      mean_rolling = mean(rolling_means, na.rm=TRUE),
+      .groups = "drop"
+    )
+  
+  # y-limits
+  y_limits     <- range(dat$MODE_long$PCWD, na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
+  
+  # Compute max of each ensemble for dotted lines
+  ensemble_max <- dat$MODE_long %>%
+    group_by(ensemble) %>%
+    summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+    summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
+    mutate(label = "Ens_maximum")
+  
+  # Build ggplot
+  p_ts <- ggplot()
+  
+  # Exceedance rectangles colored by direction
+  if (nrow(exceed_periods) > 0) {
+    p_ts <- p_ts + 
+      geom_rect(
+        data = exceed_periods,
+        aes(xmin = start, xmax = end, 
+            ymin = y_limits[1], ymax = y_limits[2],
+            fill = direction),
+        inherit.aes = FALSE,
+        alpha = 0.4
+      ) 
+  }
+  p_ts <- p_ts +
+    geom_line(data = dat$MODE_long, aes(time, PCWD, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3, alpha=0.4) +
+    geom_line(data = dat$MODE_mean, aes(time, PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
+    geom_line(data = rolling_filtered, aes(time, mean_rolling, color="rolling_mean"), linewidth=0.7) +
+    # geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
+    scale_y_continuous(limits=y_limits, breaks=common_breaks) +
+    scale_x_continuous(breaks=c(1400, 1600, 1800, 2000)) +
+    scale_color_manual(name = "Data",
+      values = c(
+        "EMs_ModE"  = "#7EA3CC",
+        "Mean_ModE" = "#255C99",
+        "rolling_mean"="black" 
+       # "Ens_maximum"= "grey30"
+      ),
+      labels = c(
+        "Individual Members", "Ensemble Mean", "30-yr rolling\n Ensemble Mean"
+        #, "max PCWD"
+        )
+      ) +
+      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
+      labels = c("wetter", "drier")
+    ) +
+    labs(x = "", y = "PCWD [mm]", color = "Data") +
+    theme_classic(base_size = 14) +
+    theme(axis.title.y = element_text(margin=margin(r=10)),
+          legend.position="none", legend.title = element_text(face="bold"))
+  
+  return(p_ts)
+}
+
+ts_MED <- plot_region_PCWD_ts("MED")
+ts_MED
+
+ts_WNA <- plot_region_PCWD_ts("WNA")
+ts_WNA
+
+ts_ARP <- plot_region_PCWD_ts("ARP")
+ts_ARP
+
+ts_CAU <- plot_region_PCWD_ts("CAU")
+ts_CAU
+
+# ggsave(
+#   filename = here::here("figures/PCWD_PDSI_comp_legend.pdf"),
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 12,           # in inches
+#   height   = 6,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
+
+```
+
+Plot comparison for PDSI: 
+- 30-year (monthly data!) rolling means as in PCWD - define period exceedances based on those (but can take absolute value as threshold as already defined as wet (exceeds positive 1) and dry (exceeds negative 1))
+
+```{r}
+rolling_means_PDSI_AWC100 <- list()
+# Define window size
+window_size <- 30*12 # 30-year rolling windows on monthly data
+
+# Compute rolling means for each ensemble member
+for (region_name in names(regional_test_PDSI_AWC100)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_test_PDSI_AWC100[[region_name]][13:7080,]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means_PDSI_AWC100[[region_name]] <- rolling_mean_matrix
+}
+
+rolling_means_PDSI_AWC100_long <-  do.call(rbind, lapply(names(rolling_means_PDSI_AWC100), function(region) {
+  df <- as.data.frame(rolling_means_PDSI_AWC100[[region]])
+  df$time <- time_dates[192:6900]  # Adjust time range accordingly: -180 on both ends as window is 360 and also -12 as start in the second year as in PCWD
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
+  return(df_long)
+}))
+
+
+rolling_means_PDSI_AWCrecon <- list()
+# Define window size
+window_size <- 30*12 # 30-year rolling windows on monthly data
+
+# Compute rolling means for each ensemble member
+for (region_name in names(regional_test_PDSI_AWCrecon)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_test_PDSI_AWCrecon[[region_name]][13:7080,]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means_PDSI_AWCrecon[[region_name]] <- rolling_mean_matrix
+}
+
+rolling_means_PDSI_AWCrecon_long <-  do.call(rbind, lapply(names(rolling_means_PDSI_AWCrecon), function(region) {
+  df <- as.data.frame(rolling_means_PDSI_AWCrecon[[region]])
+  df$time <- time_dates[192:6900]  # Adjust time range accordingly: -180 on both ends as window is 360 and also -12 as start in the second year as in PCWD
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
+  return(df_long)
+}))
+```
+
+```{r}
+ ------------------------------------------------------------------------------
+# Helper: prepare data
+# ------------------------------------------------------------------------------
+prepare_region_data_PDSI <- function(region,
+                                regional_test_PDSI_AWC100,
+                                drop_initial_years = 2) {
+  MODE_mat <- regional_test_PDSI_AWC100[[region]]
+
+  MODE_long <- MODE_mat %>%
+    as.data.frame() %>%
+    mutate(time = as.Date(time_dates)) %>%
+    pivot_longer(!all_of("time"), names_to = "ensemble", values_to = "PDSI")
+
+  MODE_mean <- MODE_long %>%
+    group_by(time) %>%
+    summarise(PDSI = mean(PDSI, na.rm = TRUE), .groups = "drop")
+
+  cutoff <- as.Date(time_dates[drop_initial_years * 12 + 1])
+
+  MODE_long <- MODE_long %>% filter(time >= cutoff)
+  MODE_mean <- MODE_mean %>% filter(time >= cutoff)
+
+  list(
+    MODE_long = MODE_long,
+    MODE_mean = MODE_mean
+  )
+}
+
+
+#Timeseries function alone: 
+plot_region_PDSI_AWC100_ts <- function(region_code) {
+  
+  dat <- prepare_region_data_PDSI(region_code,
+                             regional_test_PDSI_AWC100)
+  
+  # Compute anomalies + bounds + exceedance runs
+  means_filtered <- rolling_means_PDSI_AWC100_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      EM = mean(rolling_means, na.rm=TRUE),
+      .groups = "drop"
+    )
+  
+  first_mean <- means_filtered %>%
+    arrange(time) %>%
+    slice(1) %>%
+    pull(EM)
+  
+  means_filtered <- means_filtered %>%
+    mutate(
+      lower_bound = -1,
+      upper_bound = 1,
+      exceeds     = EM < lower_bound | EM > upper_bound,
+      direction   = case_when(
+        EM > upper_bound ~ "wetter",
+        EM < lower_bound ~ "drier",
+        TRUE ~ NA_character_
+      ),
+      run_id      = data.table::rleid(exceeds)
+    )
+  
+  exceed_periods <- means_filtered %>%
+    filter(exceeds) %>%
+    group_by(run_id, direction) %>%
+    summarise(
+      start = min(time),
+      end   = max(time),
+      .groups="drop"
+    )
+  
+  # y-limits
+  y_limits     <- range(dat$MODE_long$PDSI, na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
+  
+  # # Compute max of each ensemble for dotted lines
+  # ensemble_max <- dat$MODE_long %>%
+  #   group_by(ensemble) %>%
+  #   summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+  #   summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
+  #   mutate(label = "Ens_maximum")
+  
+  # Build ggplot
+  p_ts <- ggplot()
+  
+  # Exceedance rectangles colored by direction
+  if (nrow(exceed_periods) > 0) {
+    p_ts <- p_ts + 
+      geom_rect(
+        data = exceed_periods,
+        aes(xmin = start, xmax = end, 
+            ymin = y_limits[1], ymax = y_limits[2],
+            fill = direction),
+        inherit.aes = FALSE,
+        alpha = 0.4
+      ) 
+  }
+  p_ts <- p_ts +
+    geom_line(data = dat$MODE_long, aes(time, PDSI, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3, alpha=0.4) +
+    geom_line(data = dat$MODE_mean, aes(time, PDSI, color = factor("Mean_ModE")), linewidth = 0.8) +
+    geom_line(data = means_filtered, aes(time, EM, color="rolling_mean"), linewidth=0.7) +
+    # geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
+    scale_y_continuous(limits=rev(y_limits), breaks=common_breaks, trans = "reverse") +
+    scale_x_date(
+    breaks = as.Date(c("1400-01-01", "1600-01-01", "1800-01-01", "2000-01-01")),
+    date_labels = "%Y"
+  )+
+    scale_color_manual(name = "Data",
+      values = c(
+        "EMs_ModE"  = "#7EA3CC",
+        "Mean_ModE" = "#255C99",
+        "rolling_mean"="black" 
+        # "Ens_maximum"= "grey30"
+      ),
+      labels = c(
+        "EMs - PDSI AWC_100", "Mean - PDSI AWC_100", "30-yr rolling\nmean - PDSI AWC_100"
+        #, "ModE-Sim* - max PCWD"
+        )
+      ) +
+      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
+      labels = c("wetter", "drier")
+    ) +
+    labs(x = "Year", y = "PDSI", color = "Data") +
+    theme_classic(base_size = 14) +
+    theme(axis.title.y = element_text(margin=margin(r=10)),
+          legend.position="none", legend.title = element_text(face="bold"))
+  
+  return(p_ts)
+}
+
+ts_MED_PDSI_AWC100 <- plot_region_PDSI_AWC100_ts("MED")
+ts_MED_PDSI_AWC100
+
+ts_WNA_PDSI_AWC100 <- plot_region_PDSI_AWC100_ts("WNA")
+ts_WNA_PDSI_AWC100
+
+ts_ARP_PDSI_AWC100 <- plot_region_PDSI_AWC100_ts("ARP")
+ts_ARP_PDSI_AWC100
+
+ts_CAU_PDSI_AWC100 <- plot_region_PDSI_AWC100_ts("CAU")
+ts_CAU_PDSI_AWC100
+
+```
+
+```{r}
+
+#Timeseries function alone: 
+plot_region_PDSI_AWCrecon_ts <- function(region_code) {
+  
+  dat <- prepare_region_data_PDSI(region_code,
+                             regional_test_PDSI_AWCrecon)
+  
+  # Compute anomalies + bounds + exceedance runs
+  means_filtered <- rolling_means_PDSI_AWCrecon_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      EM = mean(rolling_means, na.rm=TRUE),
+      .groups = "drop"
+    )
+  
+  first_mean <- means_filtered %>%
+    arrange(time) %>%
+    slice(1) %>%
+    pull(EM)
+  
+  means_filtered <- means_filtered %>%
+    mutate(
+      lower_bound = -1,
+      upper_bound = 1,
+      exceeds     = EM < lower_bound | EM > upper_bound,
+      direction   = case_when(
+        EM > upper_bound ~ "wetter",
+        EM < lower_bound ~ "drier",
+        TRUE ~ NA_character_
+      ),
+      run_id      = data.table::rleid(exceeds)
+    )
+  
+  exceed_periods <- means_filtered %>%
+    filter(exceeds) %>%
+    group_by(run_id, direction) %>%
+    summarise(
+      start = min(time),
+      end   = max(time),
+      .groups="drop"
+    )
+  
+  # y-limits
+  y_limits     <- range(dat$MODE_long$PDSI, na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
+  
+  # # Compute max of each ensemble for dotted lines
+  # ensemble_max <- dat$MODE_long %>%
+  #   group_by(ensemble) %>%
+  #   summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+  #   summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
+  #   mutate(label = "Ens_maximum")
+  
+  # Build ggplot
+  p_ts <- ggplot()
+  
+  # Exceedance rectangles colored by direction
+  if (nrow(exceed_periods) > 0) {
+    p_ts <- p_ts + 
+      geom_rect(
+        data = exceed_periods,
+        aes(xmin = start, xmax = end, 
+            ymin = y_limits[1], ymax = y_limits[2],
+            fill = direction),
+        inherit.aes = FALSE,
+        alpha = 0.4
+      ) 
+  }
+  p_ts <- p_ts +
+    geom_line(data = dat$MODE_long, aes(time, PDSI, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3, alpha=0.4) +
+    geom_line(data = dat$MODE_mean, aes(time, PDSI, color = factor("Mean_ModE")), linewidth = 0.8) +
+    geom_line(data = means_filtered, aes(time, EM, color="rolling_mean"), linewidth=0.7) +
+    # geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
+    scale_y_continuous(limits=rev(y_limits), breaks=common_breaks, trans = "reverse") +    
+    scale_x_date(
+    breaks = as.Date(c("1400-01-01", "1600-01-01", "1800-01-01", "2000-01-01")),
+    date_labels = "%Y"
+  )+
+    scale_color_manual(name = "Data",
+      values = c(
+        "EMs_ModE"  = "#7EA3CC",
+        "Mean_ModE" = "#255C99",
+        "rolling_mean"="black" 
+        # "Ens_maximum"= "grey30"
+      ),
+      labels = c(
+        "EMs - PDSI AWC_recon", "Mean - PDSI AWC_recon", "30-yr rolling\nmean - PDSI AWC_recon"
+        #, "ModE-Sim* - max PCWD"
+        )
+      ) +
+      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
+      labels = c("wetter", "drier")
+    ) +
+    labs(x = "", y = "PDSI", color = "Data") +
+    theme_classic(base_size = 14) +
+    theme(axis.title.y = element_text(margin=margin(r=10)),
+          legend.position="none", legend.title = element_text(face="bold"))
+  
+  return(p_ts)
+}
+
+ts_MED_PDSI_AWCrecon <- plot_region_PDSI_AWCrecon_ts("MED")
+ts_MED_PDSI_AWCrecon
+
+ts_WNA_PDSI_AWCrecon <- plot_region_PDSI_AWCrecon_ts("WNA")
+ts_WNA_PDSI_AWCrecon
+
+ts_ARP_PDSI_AWCrecon <- plot_region_PDSI_AWCrecon_ts("ARP")
+ts_ARP_PDSI_AWCrecon
+
+ts_CAU_PDSI_AWCrecon <- plot_region_PDSI_AWCrecon_ts("CAU")
+ts_CAU_PDSI_AWCrecon
+
+
+```
+
+```{r}
+### save plots
+ts_MED <- ts_MED + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWC100 <- ts_MED_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWCrecon <- ts_MED_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+combined_MED <- plot_grid(
+  ts_MED,ts_MED_PDSI_AWC100, ts_MED_PDSI_AWCrecon, 
+  nrow        = 3,
+  ncol        = 1,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "a) MED – Annmax PCWD", 
+    "b) MED – PDSI AWC 100mm",
+    "c) MED – PDSI AWC recon"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+print(combined_MED)
+
+ggsave(
+  filename = here::here("figures/PCWD_PDSI_comp_MED.pdf"),
+  plot     = combined_MED,
+  device   = cairo_pdf,    # better text rendering
+  width    = 8,           # in inches
+  height   = 10,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+#####################
+### save plots
+ts_WNA <- ts_WNA + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWC100 <- ts_WNA_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWCrecon <- ts_WNA_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+combined_WNA <- plot_grid(
+  ts_WNA,ts_WNA_PDSI_AWC100, ts_WNA_PDSI_AWCrecon, 
+  nrow        = 3,
+  ncol        = 1,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "a) WNA – Annmax PCWD", 
+    "b) WNA – PDSI AWC 100mm",
+    "c) WNA – PDSI AWC recon"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+print(combined_WNA)
+
+ggsave(
+  filename = here::here("figures/PCWD_PDSI_comp_WNA.pdf"),
+  plot     = combined_WNA,
+  device   = cairo_pdf,    # better text rendering
+  width    = 8,           # in inches
+  height   = 10,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+#########################
+### save plots
+ts_ARP <- ts_ARP + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWC100 <- ts_ARP_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWCrecon <- ts_ARP_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+combined_ARP <- plot_grid(
+  ts_ARP,ts_ARP_PDSI_AWC100, ts_ARP_PDSI_AWCrecon, 
+  nrow        = 3,
+  ncol        = 1,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "a) ARP – Annmax PCWD", 
+    "b) ARP – PDSI AWC 100mm",
+    "c) ARP – PDSI AWC recon"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+print(combined_ARP)
+
+ggsave(
+  filename = here::here("figures/PCWD_PDSI_comp_ARP.pdf"),
+  plot     = combined_ARP,
+  device   = cairo_pdf,    # better text rendering
+  width    = 8,           # in inches
+  height   = 10,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+############################
+### save plots
+ts_CAU <- ts_CAU + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWC100 <- ts_CAU_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWCrecon <- ts_CAU_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+combined_CAU <- plot_grid(
+  ts_CAU,ts_CAU_PDSI_AWC100, ts_CAU_PDSI_AWCrecon, 
+  nrow        = 3,
+  ncol        = 1,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "a) CAU – Annmax PCWD", 
+    "b) CAU – PDSI AWC 100mm",
+    "c) CAU – PDSI AWC recon"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+print(combined_CAU)
+
+ggsave(
+  filename = here::here("figures/PCWD_PDSI_comp_CAU.pdf"),
+  plot     = combined_CAU,
+  device   = cairo_pdf,    # better text rendering
+  width    = 8,           # in inches
+  height   = 10,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+
+
+Repeat the same for PDSI using annual maximum PDSI values
+
+```{r}
+regional_test_PDSI_AWC100_annual_mean <- lapply(regional_test_PDSI_AWC100, function(mat) {
+  
+  # Add time and pivot long
+  df <- mat %>%
+    as.data.frame() %>%
+    mutate(time = time_dates) %>%
+    pivot_longer(!all_of("time"), names_to = "ensemble", values_to = "PDSI") %>%
+    mutate(year = as.integer(format(time, "%Y"))) %>%
+    
+    # Annual mean per ensemble member
+    group_by(year, ensemble) %>%
+    summarise(PDSI = mean(PDSI, na.rm = TRUE), .groups = "drop") %>%
+    
+    # Pivot back to wide (rows = years, cols = ensemble members)
+    pivot_wider(names_from = ensemble, values_from = PDSI) %>%
+    arrange(year)
+  
+  # Return as matrix with same structure as input
+  mat_out <- df %>% dplyr::select(-year) %>% as.matrix()
+ # rownames(mat_out) <- df$year
+  mat_out
+})
+
+regional_test_PDSI_AWC100_annual_min <- lapply(regional_test_PDSI_AWC100, function(mat) {
+  
+  # Add time and pivot long
+  df <- mat %>%
+    as.data.frame() %>%
+    mutate(time = time_dates) %>%
+    pivot_longer(!all_of("time"), names_to = "ensemble", values_to = "PDSI") %>%
+    mutate(year = as.integer(format(time, "%Y"))) %>%
+    
+    # Annual mean per ensemble member
+    group_by(year, ensemble) %>%
+    summarise(PDSI = min(PDSI, na.rm = TRUE), .groups = "drop") %>%
+    
+    # Pivot back to wide (rows = years, cols = ensemble members)
+    pivot_wider(names_from = ensemble, values_from = PDSI) %>%
+    arrange(year)
+  
+  # Return as matrix with same structure as input
+  mat_out <- df %>% dplyr::select(-year) %>% as.matrix()
+ # rownames(mat_out) <- df$year
+  mat_out
+})
+
+
+rolling_means_AWC100_annual_mean <- list()
+
+# Define window size
+window_size <- 30
+
+# Compute rolling means for each ensemble member
+for (region_name in names(regional_test_PDSI_AWC100_annual_mean)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_test_PDSI_AWC100_annual_mean[[region_name]][2:590,]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means_AWC100_annual_mean[[region_name]] <- rolling_mean_matrix
+}
+
+rolling_means_AWC100_annual_mean_long <-  do.call(rbind, lapply(names(rolling_means_AWC100_annual_mean), function(region) {
+  df <- as.data.frame(rolling_means_AWC100_annual_mean[[region]])
+  df$time <- seq(1436, 1995)  # Adjust time range accordingly
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
+  return(df_long)
+}))
+
+
+rolling_means_AWC100_annual_min <- list()
+
+# Define window size
+window_size <- 30
+
+# Compute rolling means for each ensemble member
+for (region_name in names(regional_test_PDSI_AWC100_annual_min)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_test_PDSI_AWC100_annual_min[[region_name]][2:590,]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means_AWC100_annual_min[[region_name]] <- rolling_mean_matrix
+}
+
+rolling_means_AWC100_annual_min_long <-  do.call(rbind, lapply(names(rolling_means_AWC100_annual_min), function(region) {
+  df <- as.data.frame(rolling_means_AWC100_annual_min[[region]])
+  df$time <- seq(1436, 1995)  # Adjust time range accordingly
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
+  return(df_long)
+}))
+
+```
+
+Repeat for PDSI AWC recon: 
+
+```{r}
+regional_test_PDSI_AWCrecon_annual_mean <- lapply(regional_test_PDSI_AWCrecon, function(mat) {
+  
+  # Add time and pivot long
+  df <- mat %>%
+    as.data.frame() %>%
+    mutate(time = time_dates) %>%
+    pivot_longer(!all_of("time"), names_to = "ensemble", values_to = "PDSI") %>%
+    mutate(year = as.integer(format(time, "%Y"))) %>%
+    
+    # Annual mean per ensemble member
+    group_by(year, ensemble) %>%
+    summarise(PDSI = mean(PDSI, na.rm = TRUE), .groups = "drop") %>%
+    
+    # Pivot back to wide (rows = years, cols = ensemble members)
+    pivot_wider(names_from = ensemble, values_from = PDSI) %>%
+    arrange(year)
+  
+  # Return as matrix with same structure as input
+  mat_out <- df %>% dplyr::select(-year) %>% as.matrix()
+ # rownames(mat_out) <- df$year
+  mat_out
+})
+
+regional_test_PDSI_AWCrecon_annual_min <- lapply(regional_test_PDSI_AWCrecon, function(mat) {
+  
+  # Add time and pivot long
+  df <- mat %>%
+    as.data.frame() %>%
+    mutate(time = time_dates) %>%
+    pivot_longer(!all_of("time"), names_to = "ensemble", values_to = "PDSI") %>%
+    mutate(year = as.integer(format(time, "%Y"))) %>%
+    
+    # Annual mean per ensemble member
+    group_by(year, ensemble) %>%
+    summarise(PDSI = min(PDSI, na.rm = TRUE), .groups = "drop") %>%
+    
+    # Pivot back to wide (rows = years, cols = ensemble members)
+    pivot_wider(names_from = ensemble, values_from = PDSI) %>%
+    arrange(year)
+  
+  # Return as matrix with same structure as input
+  mat_out <- df %>% dplyr::select(-year) %>% as.matrix()
+ # rownames(mat_out) <- df$year
+  mat_out
+})
+
+
+rolling_means_AWCrecon_annual_mean <- list()
+
+# Define window size
+window_size <- 30
+
+# Compute rolling means for each ensemble member
+for (region_name in names(regional_test_PDSI_AWCrecon_annual_mean)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_test_PDSI_AWCrecon_annual_mean[[region_name]][2:590,]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means_AWCrecon_annual_mean[[region_name]] <- rolling_mean_matrix
+}
+
+rolling_means_AWCrecon_annual_mean_long <-  do.call(rbind, lapply(names(rolling_means_AWCrecon_annual_mean), function(region) {
+  df <- as.data.frame(rolling_means_AWCrecon_annual_mean[[region]])
+  df$time <- seq(1436, 1995)  # Adjust time range accordingly
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
+  return(df_long)
+}))
+
+
+rolling_means_AWCrecon_annual_min <- list()
+
+# Define window size
+window_size <- 30
+
+# Compute rolling means for each ensemble member
+for (region_name in names(regional_test_PDSI_AWCrecon_annual_min)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- regional_test_PDSI_AWCrecon_annual_min[[region_name]][2:590,]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means_AWCrecon_annual_min[[region_name]] <- rolling_mean_matrix
+}
+
+rolling_means_AWCrecon_annual_min_long <-  do.call(rbind, lapply(names(rolling_means_AWCrecon_annual_min), function(region) {
+  df <- as.data.frame(rolling_means_AWCrecon_annual_min[[region]])
+  df$time <- seq(1436, 1995)  # Adjust time range accordingly
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
+  return(df_long)
+}))
+```
+
+Plotting the annual mean values: 
+```{r}
+prepare_region_data_PDSI <- function(region,
+                                regional_test_PDSI_AWC100_annual_mean,
+                                mode_years = 1420:2009,
+                                drop_initial_years = 2) {
+  MODE_mat <- regional_test_PDSI_AWC100_annual_mean[[region]]
+
+  MODE_long <- MODE_mat %>%
+    as.data.frame() %>%
+    mutate(time = mode_years) %>%
+    pivot_longer(-time, names_to = "ensemble", values_to = "PDSI")
+
+  MODE_mean <- MODE_long %>%
+    group_by(time) %>%
+    summarise(PDSI = mean(PDSI, na.rm = TRUE), .groups = "drop")
+  # ———————— drop the first `drop_initial_years` rows ————————
+  MODE_long <- MODE_long %>% 
+    filter(time >= mode_years[drop_initial_years])
+  
+  MODE_mean <- MODE_mean %>% 
+    filter(time >= mode_years[drop_initial_years])
+
+  list(
+    MODE_long = MODE_long,
+    MODE_mean = MODE_mean
+  )
+}
+
+
+#Timeseries function alone: 
+plot_region_PDSI_AWC100_ts <- function(region_code) {
+  
+  dat <- prepare_region_data_PDSI(region_code,
+                             regional_test_PDSI_AWC100_annual_mean)
+  
+  # Compute anomalies + bounds + exceedance runs
+  means_filtered <- rolling_means_AWC100_annual_mean_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      EM = mean(rolling_means, na.rm=TRUE),
+      .groups = "drop"
+    )
+  
+  first_mean <- means_filtered %>%
+    arrange(time) %>%
+    slice(1) %>%
+    pull(EM)
+  
+  means_filtered <- means_filtered %>%
+    mutate(
+      lower_bound = -1,
+      upper_bound = 1,
+      exceeds     = EM < lower_bound | EM > upper_bound,
+      direction   = case_when(
+        EM > upper_bound ~ "wetter",
+        EM < lower_bound ~ "drier",
+        TRUE ~ NA_character_
+      ),
+      run_id      = data.table::rleid(exceeds)
+    )
+  
+  exceed_periods <- means_filtered %>%
+    filter(exceeds) %>%
+    group_by(run_id, direction) %>%
+    summarise(
+      start = min(time),
+      end   = max(time),
+      .groups="drop"
+    )
+  
+  # y-limits
+  y_limits     <- range(dat$MODE_long$PDSI, na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
+  
+  # # Compute max of each ensemble for dotted lines
+  # ensemble_max <- dat$MODE_long %>%
+  #   group_by(ensemble) %>%
+  #   summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+  #   summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
+  #   mutate(label = "Ens_maximum")
+  
+  # Build ggplot
+  p_ts <- ggplot()
+  
+  # Exceedance rectangles colored by direction
+  if (nrow(exceed_periods) > 0) {
+    p_ts <- p_ts + 
+      geom_rect(
+        data = exceed_periods,
+        aes(xmin = start, xmax = end, 
+            ymin = y_limits[1], ymax = y_limits[2],
+            fill = direction),
+        inherit.aes = FALSE,
+        alpha = 0.4
+      ) 
+  }
+  p_ts <- p_ts +
+    geom_line(data = dat$MODE_long, aes(time, PDSI, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3, alpha=0.4) +
+    geom_line(data = dat$MODE_mean, aes(time, PDSI, color = factor("Mean_ModE")), linewidth = 0.8) +
+    geom_line(data = means_filtered, aes(time, EM, color="rolling_mean"), linewidth=0.7) +
+    # geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
+    scale_y_continuous(limits=rev(y_limits), breaks=common_breaks, trans = "reverse") +    
+    scale_color_manual(name = "Data",
+      values = c(
+        "EMs_ModE"  = "#7EA3CC",
+        "Mean_ModE" = "#255C99",
+        "rolling_mean"="black" 
+        # "Ens_maximum"= "grey30"
+      ),
+      labels = c(
+        "EMs - PDSI AWC_100\nann_mean", "Mean - PDSI AWC_100\nann_mean", "30-yr rolling\nmean - PDSI AWC_100\nann_mean"
+        #, "ModE-Sim* - max PCWD"
+        )
+      ) +
+      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
+      labels = c("wetter", "drier")
+    ) +
+    labs(x = "", y = "PDSI", color = "Data") +
+    theme_classic(base_size = 14) +
+    theme(axis.title.y = element_text(margin=margin(r=10)),
+          legend.position="none", legend.title = element_text(face="bold"))
+  
+  return(p_ts)
+}
+
+ts_MED_PDSI_AWC100_annmean <- plot_region_PDSI_AWC100_ts("MED")
+ts_MED_PDSI_AWC100_annmean
+
+ts_WNA_PDSI_AWC100_annmean <- plot_region_PDSI_AWC100_ts("WNA")
+ts_WNA_PDSI_AWC100_annmean
+
+ts_ARP_PDSI_AWC100_annmean <- plot_region_PDSI_AWC100_ts("ARP")
+ts_ARP_PDSI_AWC100_annmean
+
+ts_CAU_PDSI_AWC100_annmean <- plot_region_PDSI_AWC100_ts("CAU")
+ts_CAU_PDSI_AWC100_annmean
+
+```
+
+```{r}
+prepare_region_data_PDSI <- function(region,
+                                regional_test_PDSI_AWCrecon_annual_mean,
+                                mode_years = 1420:2009,
+                                drop_initial_years = 2) {
+  MODE_mat <- regional_test_PDSI_AWCrecon_annual_mean[[region]]
+
+  MODE_long <- MODE_mat %>%
+    as.data.frame() %>%
+    mutate(time = mode_years) %>%
+    pivot_longer(-time, names_to = "ensemble", values_to = "PDSI")
+
+  MODE_mean <- MODE_long %>%
+    group_by(time) %>%
+    summarise(PDSI = mean(PDSI, na.rm = TRUE), .groups = "drop")
+  # ———————— drop the first `drop_initial_years` rows ————————
+  MODE_long <- MODE_long %>% 
+    filter(time >= mode_years[drop_initial_years])
+  
+  MODE_mean <- MODE_mean %>% 
+    filter(time >= mode_years[drop_initial_years])
+
+  list(
+    MODE_long = MODE_long,
+    MODE_mean = MODE_mean
+  )
+}
+
+
+#Timeseries function alone: 
+plot_region_PDSI_AWCrecon_ts <- function(region_code) {
+  
+  dat <- prepare_region_data_PDSI(region_code,
+                             regional_test_PDSI_AWCrecon_annual_mean)
+  
+  # Compute anomalies + bounds + exceedance runs
+  means_filtered <- rolling_means_AWCrecon_annual_mean_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      EM = mean(rolling_means, na.rm=TRUE),
+      .groups = "drop"
+    )
+  
+  first_mean <- means_filtered %>%
+    arrange(time) %>%
+    slice(1) %>%
+    pull(EM)
+  
+  means_filtered <- means_filtered %>%
+    mutate(
+      lower_bound = -1,
+      upper_bound = 1,
+      exceeds     = EM < lower_bound | EM > upper_bound,
+      direction   = case_when(
+        EM > upper_bound ~ "wetter",
+        EM < lower_bound ~ "drier",
+        TRUE ~ NA_character_
+      ),
+      run_id      = data.table::rleid(exceeds)
+    )
+  
+  exceed_periods <- means_filtered %>%
+    filter(exceeds) %>%
+    group_by(run_id, direction) %>%
+    summarise(
+      start = min(time),
+      end   = max(time),
+      .groups="drop"
+    )
+  
+  # y-limits
+  y_limits     <- range(dat$MODE_long$PDSI, na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
+  
+  # # Compute max of each ensemble for dotted lines
+  # ensemble_max <- dat$MODE_long %>%
+  #   group_by(ensemble) %>%
+  #   summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+  #   summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
+  #   mutate(label = "Ens_maximum")
+  
+  # Build ggplot
+  p_ts <- ggplot()
+  
+  # Exceedance rectangles colored by direction
+  if (nrow(exceed_periods) > 0) {
+    p_ts <- p_ts + 
+      geom_rect(
+        data = exceed_periods,
+        aes(xmin = start, xmax = end, 
+            ymin = y_limits[1], ymax = y_limits[2],
+            fill = direction),
+        inherit.aes = FALSE,
+        alpha = 0.4
+      ) 
+  }
+  p_ts <- p_ts +
+    geom_line(data = dat$MODE_long, aes(time, PDSI, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3, alpha=0.4) +
+    geom_line(data = dat$MODE_mean, aes(time, PDSI, color = factor("Mean_ModE")), linewidth = 0.8) +
+    geom_line(data = means_filtered, aes(time, EM, color="rolling_mean"), linewidth=0.7) +
+    # geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
+    scale_y_continuous(limits=rev(y_limits), breaks=common_breaks, trans = "reverse") +    
+    scale_color_manual(name = "Data",
+      values = c(
+        "EMs_ModE"  = "#7EA3CC",
+        "Mean_ModE" = "#255C99",
+        "rolling_mean"="black" 
+        # "Ens_maximum"= "grey30"
+      ),
+      labels = c(
+        "EMs - PDSI AWC_recon\nann_mean", "Mean - PDSI AWC_recon\nann_mean", "30-yr rolling\nmean - PDSI AWC_recon\nann_mean"
+        #, "ModE-Sim* - max PCWD"
+        )
+      ) +
+      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
+      labels = c("wetter", "drier")
+    ) +
+    labs(x = "", y = "PDSI", color = "Data") +
+    theme_classic(base_size = 14) +
+    theme(axis.title.y = element_text(margin=margin(r=10)),
+          legend.position="none", legend.title = element_text(face="bold"))
+  
+  return(p_ts)
+}
+
+ts_MED_PDSI_AWCrecon_annmean <- plot_region_PDSI_AWCrecon_ts("MED")
+ts_MED_PDSI_AWCrecon_annmean
+
+ts_WNA_PDSI_AWCrecon_annmean <- plot_region_PDSI_AWCrecon_ts("WNA")
+ts_WNA_PDSI_AWCrecon_annmean
+
+ts_ARP_PDSI_AWCrecon_annmean <- plot_region_PDSI_AWCrecon_ts("ARP")
+ts_ARP_PDSI_AWCrecon_annmean
+
+ts_CAU_PDSI_AWCrecon_annmean <- plot_region_PDSI_AWCrecon_ts("CAU")
+ts_CAU_PDSI_AWCrecon_annmean
+
+```
+
+
+
+Min values for AWC_100: reflecting driest values each year
+
+```{r}
+prepare_region_data_PDSI <- function(region,
+                                regional_test_PDSI_AWC100_annual_min,
+                                mode_years = 1420:2009,
+                                drop_initial_years = 2) {
+  MODE_mat <- regional_test_PDSI_AWC100_annual_min[[region]]
+
+  MODE_long <- MODE_mat %>%
+    as.data.frame() %>%
+    mutate(time = mode_years) %>%
+    pivot_longer(-time, names_to = "ensemble", values_to = "PDSI")
+
+  MODE_mean <- MODE_long %>%
+    group_by(time) %>%
+    summarise(PDSI = mean(PDSI, na.rm = TRUE), .groups = "drop")
+  # ———————— drop the first `drop_initial_years` rows ————————
+  MODE_long <- MODE_long %>% 
+    filter(time >= mode_years[drop_initial_years])
+  
+  MODE_mean <- MODE_mean %>% 
+    filter(time >= mode_years[drop_initial_years])
+
+  list(
+    MODE_long = MODE_long,
+    MODE_mean = MODE_mean
+  )
+}
+
+
+#Timeseries function alone: 
+plot_region_PDSI_AWC100_ts <- function(region_code) {
+  
+  dat <- prepare_region_data_PDSI(region_code,
+                             regional_test_PDSI_AWC100_annual_min)
+  
+  # Compute anomalies + bounds + exceedance runs
+  means_filtered <- rolling_means_AWC100_annual_min_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      EM = mean(rolling_means, na.rm=TRUE),
+      .groups = "drop"
+    )
+  
+  first_mean <- means_filtered %>%
+    arrange(time) %>%
+    slice(1) %>%
+    pull(EM)
+  
+  means_filtered <- means_filtered %>%
+    mutate(
+      lower_bound = -1,
+      upper_bound = 1,
+      exceeds     = EM < lower_bound | EM > upper_bound,
+      direction   = case_when(
+        EM > upper_bound ~ "wetter",
+        EM < lower_bound ~ "drier",
+        TRUE ~ NA_character_
+      ),
+      run_id      = data.table::rleid(exceeds)
+    )
+  
+  exceed_periods <- means_filtered %>%
+    filter(exceeds) %>%
+    group_by(run_id, direction) %>%
+    summarise(
+      start = min(time),
+      end   = max(time),
+      .groups="drop"
+    )
+  
+  # y-limits
+  y_limits     <- range(dat$MODE_long$PDSI, na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
+  
+  # # Compute max of each ensemble for dotted lines
+  # ensemble_max <- dat$MODE_long %>%
+  #   group_by(ensemble) %>%
+  #   summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+  #   summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
+  #   mutate(label = "Ens_maximum")
+  
+  # Build ggplot
+  p_ts <- ggplot()
+  
+  # Exceedance rectangles colored by direction
+  if (nrow(exceed_periods) > 0) {
+    p_ts <- p_ts + 
+      geom_rect(
+        data = exceed_periods,
+        aes(xmin = start, xmax = end, 
+            ymin = y_limits[1], ymax = y_limits[2],
+            fill = direction),
+        inherit.aes = FALSE,
+        alpha = 0.4
+      ) 
+  }
+  p_ts <- p_ts +
+    geom_line(data = dat$MODE_long, aes(time, PDSI, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3, alpha=0.4) +
+    geom_line(data = dat$MODE_mean, aes(time, PDSI, color = factor("Mean_ModE")), linewidth = 0.8) +
+    geom_line(data = means_filtered, aes(time, EM, color="rolling_mean"), linewidth=0.7) +
+    # geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
+    scale_y_continuous(limits=rev(y_limits), breaks=common_breaks, trans = "reverse") +    
+    scale_color_manual(name = "Data",
+      values = c(
+        "EMs_ModE"  = "#7EA3CC",
+        "Mean_ModE" = "#255C99",
+        "rolling_mean"="black" 
+        # "Ens_maximum"= "grey30"
+      ),
+      labels = c(
+        "EMs - PDSI AWC_100\nann_min", "Mean - PDSI AWC_100\nann_min", "30-yr rolling\nmin - PDSI AWC_100\nann_min"
+        #, "ModE-Sim* - max PCWD"
+        )
+      ) +
+      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
+      labels = c("wetter", "drier")
+    ) +
+    labs(x = "Year", y = "PDSI", color = "Data") +
+    theme_classic(base_size = 14) +
+    theme(axis.title.y = element_text(margin=margin(r=10)),
+          legend.position="none", legend.title = element_text(face="bold"))
+  
+  return(p_ts)
+}
+
+ts_MED_PDSI_AWC100_annmin <- plot_region_PDSI_AWC100_ts("MED")
+ts_MED_PDSI_AWC100_annmin
+
+ts_WNA_PDSI_AWC100_annmin <- plot_region_PDSI_AWC100_ts("WNA")
+ts_WNA_PDSI_AWC100_annmin
+
+ts_ARP_PDSI_AWC100_annmin <- plot_region_PDSI_AWC100_ts("ARP")
+ts_ARP_PDSI_AWC100_annmin
+
+ts_CAU_PDSI_AWC100_annmin <- plot_region_PDSI_AWC100_ts("CAU")
+ts_CAU_PDSI_AWC100_annmin
+```
+
+
+```{r}
+prepare_region_data_PDSI <- function(region,
+                                regional_test_PDSI_AWCrecon_annual_min,
+                                mode_years = 1420:2009,
+                                drop_initial_years = 2) {
+  MODE_mat <- regional_test_PDSI_AWCrecon_annual_min[[region]]
+
+  MODE_long <- MODE_mat %>%
+    as.data.frame() %>%
+    mutate(time = mode_years) %>%
+    pivot_longer(-time, names_to = "ensemble", values_to = "PDSI")
+
+  MODE_mean <- MODE_long %>%
+    group_by(time) %>%
+    summarise(PDSI = mean(PDSI, na.rm = TRUE), .groups = "drop")
+  # ———————— drop the first `drop_initial_years` rows ————————
+  MODE_long <- MODE_long %>% 
+    filter(time >= mode_years[drop_initial_years])
+  
+  MODE_mean <- MODE_mean %>% 
+    filter(time >= mode_years[drop_initial_years])
+
+  list(
+    MODE_long = MODE_long,
+    MODE_mean = MODE_mean
+  )
+}
+
+
+#Timeseries function alone: 
+plot_region_PDSI_AWCrecon_ts <- function(region_code) {
+  
+  dat <- prepare_region_data_PDSI(region_code,
+                             regional_test_PDSI_AWCrecon_annual_min)
+  
+  # Compute anomalies + bounds + exceedance runs
+  means_filtered <- rolling_means_AWCrecon_annual_min_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      EM = mean(rolling_means, na.rm=TRUE),
+      .groups = "drop"
+    )
+  
+  first_mean <- means_filtered %>%
+    arrange(time) %>%
+    slice(1) %>%
+    pull(EM)
+  
+  means_filtered <- means_filtered %>%
+    mutate(
+      lower_bound = -1,
+      upper_bound = 1,
+      exceeds     = EM < lower_bound | EM > upper_bound,
+      direction   = case_when(
+        EM > upper_bound ~ "wetter",
+        EM < lower_bound ~ "drier",
+        TRUE ~ NA_character_
+      ),
+      run_id      = data.table::rleid(exceeds)
+    )
+  
+  exceed_periods <- means_filtered %>%
+    filter(exceeds) %>%
+    group_by(run_id, direction) %>%
+    summarise(
+      start = min(time),
+      end   = max(time),
+      .groups="drop"
+    )
+  
+  # y-limits
+  y_limits     <- range(dat$MODE_long$PDSI, na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
+  
+  # # Compute max of each ensemble for dotted lines
+  # ensemble_max <- dat$MODE_long %>%
+  #   group_by(ensemble) %>%
+  #   summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+  #   summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
+  #   mutate(label = "Ens_maximum")
+  
+  # Build ggplot
+  p_ts <- ggplot()
+  
+  # Exceedance rectangles colored by direction
+  if (nrow(exceed_periods) > 0) {
+    p_ts <- p_ts + 
+      geom_rect(
+        data = exceed_periods,
+        aes(xmin = start, xmax = end, 
+            ymin = y_limits[1], ymax = y_limits[2],
+            fill = direction),
+        inherit.aes = FALSE,
+        alpha = 0.4
+      ) 
+  }
+  p_ts <- p_ts +
+    geom_line(data = dat$MODE_long, aes(time, PDSI, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3, alpha=0.4) +
+    geom_line(data = dat$MODE_mean, aes(time, PDSI, color = factor("Mean_ModE")), linewidth = 0.8) +
+    geom_line(data = means_filtered, aes(time, EM, color="rolling_mean"), linewidth=0.7) +
+    # geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
+    scale_y_continuous(limits=rev(y_limits), breaks=common_breaks, trans = "reverse") +    
+    scale_color_manual(name = "Data",
+      values = c(
+        "EMs_ModE"  = "#7EA3CC",
+        "Mean_ModE" = "#255C99",
+        "rolling_mean"="black" 
+        # "Ens_maximum"= "grey30"
+      ),
+      labels = c(
+        "EMs - PDSI AWC_recon\nann_min", "Mean - PDSI AWC_recon\nann_min", "30-yr rolling\nmin - PDSI AWC_recon\nann_min"
+        #, "ModE-Sim* - max PCWD"
+        )
+      ) +
+      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
+      labels = c("wetter", "drier")
+    ) +
+    labs(x = "Year", y = "PDSI", color = "Data") +
+    theme_classic(base_size = 14) +
+    theme(axis.title.y = element_text(margin=margin(r=10)),
+          legend.position="none", legend.title = element_text(face="bold"))
+  
+  return(p_ts)
+}
+
+ts_MED_PDSI_AWCrecon_annmin <- plot_region_PDSI_AWCrecon_ts("MED")
+ts_MED_PDSI_AWCrecon_annmin
+
+ts_WNA_PDSI_AWCrecon_annmin <- plot_region_PDSI_AWCrecon_ts("WNA")
+ts_WNA_PDSI_AWCrecon_annmin
+
+ts_ARP_PDSI_AWCrecon_annmin <- plot_region_PDSI_AWCrecon_ts("ARP")
+ts_ARP_PDSI_AWCrecon_annmin
+
+ts_CAU_PDSI_AWCrecon_annmin <- plot_region_PDSI_AWCrecon_ts("CAU")
+ts_CAU_PDSI_AWCrecon_annmin
+```
+
+
+```{r}
+### save plots
+ts_MED <- ts_MED + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWC100 <- ts_MED_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWC100_annmean <- ts_MED_PDSI_AWC100_annmean + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWC100_annmin <- ts_MED_PDSI_AWC100_annmin + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWCrecon <- ts_MED_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWCrecon_annmean <- ts_MED_PDSI_AWCrecon_annmean + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWCrecon_annmin <- ts_MED_PDSI_AWCrecon_annmin + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+
+
+combined_MED_ALL <- plot_grid(
+  ts_MED,ts_MED,ts_MED_PDSI_AWCrecon, ts_MED_PDSI_AWC100, ts_MED_PDSI_AWCrecon_annmean,ts_MED_PDSI_AWC100_annmean, ts_MED_PDSI_AWCrecon_annmin,ts_MED_PDSI_AWC100_annmin,
+  nrow        = 4,
+  ncol        = 2,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "a) MED – Annmax PCWD", "e) as in a)",
+    "b) MED – PDSI AWC recon","f) MED – PDSI AWC 100mm",
+    "c) MED – PDSI AWC recon - ANNUAL MEAN",    "g) MED – PDSI AWC 100mm - ANNUAL MEAN",
+    "d) MED – PDSI AWC recon - ANNUAL MIN",    "h) MED – PDSI AWC 100mm - ANNUAL MIN"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+print(combined_MED_ALL)
+
+ggsave(
+  filename = here::here("figures/PCWD_PDSI_all_comp_MED.pdf"),
+  plot     = combined_MED_ALL,
+  device   = cairo_pdf,    # better text rendering
+  width    = 11,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+```{r}
+### save plots
+ts_WNA <- ts_WNA + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWC100 <- ts_WNA_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWC100_annmean <- ts_WNA_PDSI_AWC100_annmean + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWC100_annmin <- ts_WNA_PDSI_AWC100_annmin + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWCrecon <- ts_WNA_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWCrecon_annmean <- ts_WNA_PDSI_AWCrecon_annmean + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWCrecon_annmin <- ts_WNA_PDSI_AWCrecon_annmin + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+
+
+combined_WNA_ALL <- plot_grid(
+  ts_WNA,ts_WNA,ts_WNA_PDSI_AWCrecon, ts_WNA_PDSI_AWC100, ts_WNA_PDSI_AWCrecon_annmean,ts_WNA_PDSI_AWC100_annmean, ts_WNA_PDSI_AWCrecon_annmin,ts_WNA_PDSI_AWC100_annmin,
+  nrow        = 4,
+  ncol        = 2,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "a) WNA – Annmax PCWD", "e) as in a)",
+    "b) WNA – PDSI AWC recon","f) WNA – PDSI AWC 100mm",
+    "c) WNA – PDSI AWC recon - ANNUAL MEAN",    "g) WNA – PDSI AWC 100mm - ANNUAL MEAN",
+    "d) WNA – PDSI AWC recon - ANNUAL MIN",    "h) WNA – PDSI AWC 100mm - ANNUAL MIN"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+print(combined_WNA_ALL)
+
+ggsave(
+  filename = here::here("figures/PCWD_PDSI_all_comp_WNA.pdf"),
+  plot     = combined_WNA_ALL,
+  device   = cairo_pdf,    # better text rendering
+  width    = 11,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+```{r}
+### save plots
+ts_ARP <- ts_ARP + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWC100 <- ts_ARP_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWC100_annmean <- ts_ARP_PDSI_AWC100_annmean + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWC100_annmin <- ts_ARP_PDSI_AWC100_annmin + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWCrecon <- ts_ARP_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWCrecon_annmean <- ts_ARP_PDSI_AWCrecon_annmean + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWCrecon_annmin <- ts_ARP_PDSI_AWCrecon_annmin + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+
+
+combined_ARP_ALL <- plot_grid(
+  ts_ARP,ts_ARP,ts_ARP_PDSI_AWCrecon, ts_ARP_PDSI_AWC100, ts_ARP_PDSI_AWCrecon_annmean,ts_ARP_PDSI_AWC100_annmean, ts_ARP_PDSI_AWCrecon_annmin,ts_ARP_PDSI_AWC100_annmin,
+  nrow        = 4,
+  ncol        = 2,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "a) ARP – Annmax PCWD", "e) as in a)",
+    "b) ARP – PDSI AWC recon","f) ARP – PDSI AWC 100mm",
+    "c) ARP – PDSI AWC recon - ANNUAL MEAN",    "g) ARP – PDSI AWC 100mm - ANNUAL MEAN",
+    "d) ARP – PDSI AWC recon - ANNUAL MIN",    "h) ARP – PDSI AWC 100mm - ANNUAL MIN"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+print(combined_ARP_ALL)
+
+ggsave(
+  filename = here::here("figures/PCWD_PDSI_all_comp_ARP.pdf"),
+  plot     = combined_ARP_ALL,
+  device   = cairo_pdf,    # better text rendering
+  width    = 11,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+```{r}
+### save plots
+ts_CAU <- ts_CAU + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWC100 <- ts_CAU_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWC100_annmean <- ts_CAU_PDSI_AWC100_annmean + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWC100_annmin <- ts_CAU_PDSI_AWC100_annmin + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWCrecon <- ts_CAU_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWCrecon_annmean <- ts_CAU_PDSI_AWCrecon_annmean + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWCrecon_annmin <- ts_CAU_PDSI_AWCrecon_annmin + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+
+
+combined_CAU_ALL <- plot_grid(
+  ts_CAU,ts_CAU,ts_CAU_PDSI_AWCrecon, ts_CAU_PDSI_AWC100, ts_CAU_PDSI_AWCrecon_annmean,ts_CAU_PDSI_AWC100_annmean, ts_CAU_PDSI_AWCrecon_annmin,ts_CAU_PDSI_AWC100_annmin,
+  nrow        = 4,
+  ncol        = 2,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "a) CAU – Annmax PCWD", "e) as in a)",
+    "b) CAU – PDSI AWC recon","f) CAU – PDSI AWC 100mm",
+    "c) CAU – PDSI AWC recon - ANNUAL MEAN",    "g) CAU – PDSI AWC 100mm - ANNUAL MEAN",
+    "d) CAU – PDSI AWC recon - ANNUAL MIN",    "h) CAU – PDSI AWC 100mm - ANNUAL MIN"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+print(combined_CAU_ALL)
+
+ggsave(
+  filename = here::here("figures/PCWD_PDSI_all_comp_CAU.pdf"),
+  plot     = combined_CAU_ALL,
+  device   = cairo_pdf,    # better text rendering
+  width    = 11,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+```{r}
+### Stack plots differently for SI with monthly PDSI and PCWD
+ts_MED <- ts_MED + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWC100 <- ts_MED_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_MED_PDSI_AWCrecon <- ts_MED_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+ts_WNA <- ts_WNA + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWC100 <- ts_WNA_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_WNA_PDSI_AWCrecon <- ts_WNA_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+ts_ARP <- ts_ARP + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWC100 <- ts_ARP_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_ARP_PDSI_AWCrecon <- ts_ARP_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+ts_CAU <- ts_CAU + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWC100 <- ts_CAU_PDSI_AWC100 + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+ts_CAU_PDSI_AWCrecon <- ts_CAU_PDSI_AWCrecon + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+## build plot clusters
+cmp_MED <- cowplot::plot_grid(
+  ts_MED, ts_MED_PDSI_AWCrecon, ts_MED_PDSI_AWC100,
+  nrow        = 3,
+  ncol        = 1,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "MED – Annmax PCWD", "MED – PDSI AWC recon","MED – PDSI AWC 100mm"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.05,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+cmp_WNA <- cowplot::plot_grid(
+  ts_WNA, ts_WNA_PDSI_AWCrecon, ts_WNA_PDSI_AWC100,
+  nrow        = 3,
+  ncol        = 1,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "WNA – Annmax PCWD", "WNA – PDSI AWC recon","WNA – PDSI AWC 100mm"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.05,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+cmp_ARP <- cowplot::plot_grid(
+  ts_ARP, ts_ARP_PDSI_AWCrecon, ts_ARP_PDSI_AWC100,
+  nrow        = 3,
+  ncol        = 1,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "ARP – Annmax PCWD", "ARP – PDSI AWC recon","ARP – PDSI AWC 100mm"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.05,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+cmp_CAU <- cowplot::plot_grid(
+  ts_CAU, ts_CAU_PDSI_AWCrecon, ts_CAU_PDSI_AWC100,
+  nrow        = 3,
+  ncol        = 1,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "CAU – Annmax PCWD", "CAU – PDSI AWC recon","CAU – PDSI AWC 100mm"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.05,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+### combine all components: 
+
+
+cmp_MED <- cmp_MED + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+cmp_WNA <- cmp_WNA + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+cmp_ARP <- cmp_ARP + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+cmp_CAU <- cmp_CAU + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+
+
+all_ts_PDSI <- cowplot::plot_grid(
+  cmp_MED, cmp_WNA, cmp_ARP, cmp_CAU,
+  nrow        = 2,
+  ncol        = 2,
+  align       = "v",
+  axis        = "l",
+  labels      = c(
+    "a)", "b)","c)", "d)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.99,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(1, 1),
+  expand      = TRUE  
+)
+
+print(all_ts_PDSI)
+
+
+ggsave(
+  filename = here::here("figures/all_ts_PDSI_PCWD.pdf"),
+  plot     = all_ts_PDSI,
+  device   = cairo_pdf,    # better text rendering
+  width    = 12,           # in inches
+  height   = 12,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+```
+
+
+
+Scatterplots of PDSI vs PCWD metrics 
+
+```{r}
+regions <- c("MED","ARP","CAU","WNA")
+
+library(tidyverse)
+
+pcwd_df <- map_dfr(regions, function(r){
+
+  mat <- regional_PCWD[[r]]
+
+  df <- as.data.frame(mat)
+
+  df$year <- 1420:(1420 + nrow(df) - 1)   # adjust if needed
+
+  df %>%
+    pivot_longer(-year, names_to = "ensemble", values_to = "PCWD") %>%
+    mutate(
+      region = r,
+      ensemble = gsub("_tidy","",ensemble)
+    )
+})
+
+pdsi_df_recon <- map_dfr(regions, \(r)
+  regional_test_PDSI_AWCrecon[[r]] |>
+    as.data.frame() |>
+    mutate(time = row_number()) |>
+    pivot_longer(-time, names_to = "ensemble", values_to = "PDSI") |>
+    mutate(
+      region = r,
+      year  = 1420 + (time - 1) %/% 12
+    ) |>
+    group_by(region, year, ensemble) |>
+    summarise(
+      PDSI_mean = mean(PDSI, na.rm = TRUE),
+      PDSI_min  = min(PDSI, na.rm = TRUE),
+      .groups = "drop"
+    )
+)
+
+combined_recon <- left_join(
+  pcwd_df,
+  pdsi_df_recon,
+  by = c("region","year", "ensemble")
+)
+
+plot_df_recon <- combined_recon %>%
+  pivot_longer(
+    cols = c(PDSI_mean, PDSI_min),
+    names_to = "PDSI_type",
+    values_to = "PDSI"
+  )
+
+# Compute correlation per region × PDSI_type
+cor_df_recon <- plot_df_recon %>%
+  group_by(region, PDSI_type) %>%
+  summarise(
+    r = cor(PDSI, PCWD, use = "complete.obs"),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = paste0("r = ", round(r, 2))
+  )
+
+
+## for the 100mm AWC: 
+
+pdsi_df_100 <- map_dfr(regions, \(r)
+  regional_test_PDSI_AWC100[[r]] |>
+    as.data.frame() |>
+    mutate(time = row_number()) |>
+    pivot_longer(-time, names_to = "ensemble", values_to = "PDSI") |>
+    mutate(
+      region = r,
+      year  = 1420 + (time - 1) %/% 12
+    ) |>
+    group_by(region, year, ensemble) |>
+    summarise(
+      PDSI_mean = mean(PDSI, na.rm = TRUE),
+      PDSI_min  = min(PDSI, na.rm = TRUE),
+      .groups = "drop"
+    )
+)
+
+combined_100 <- left_join(
+  pcwd_df,
+  pdsi_df_100,
+  by = c("region","year","ensemble")
+)
+
+plot_df_100 <- combined_100 %>%
+  pivot_longer(
+    cols = c(PDSI_mean, PDSI_min),
+    names_to = "PDSI_type",
+    values_to = "PDSI"
+  )
+# Compute correlation per region × PDSI_type
+cor_df_100 <- plot_df_100 %>%
+  group_by(region, PDSI_type) %>%
+  summarise(
+    r = cor(PDSI, PCWD, use = "complete.obs"),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = paste0("r = ", round(r, 2))
+  )
+
+```
+
+
+```{r}
+library(ggh4x)
+#install.packages("ggrastr")
+library(ggrastr)
+library(cowplot)
+
+region_cols <- c(
+  ARP = "#E5973B",
+  CAU = "#3C3980",
+    MED = "#F5B0CB",
+  WNA = "#236A3F"
+)
+
+positions_recon <- plot_df_recon %>%
+  group_by(region) %>%
+  summarise(
+    x_max = max(PDSI, na.rm = TRUE),
+    y_max = max(PCWD, na.rm = TRUE)
+  )
+
+cor_df_recon_plot <- cor_df_recon %>%
+  left_join(positions_recon, by = "region") %>%
+  group_by(region) %>%
+  mutate(
+    x_pos = x_max,
+    y_pos = y_max - (row_number() - 2) * 0.05 * y_max  # stagger vertically
+  ) %>%
+  ungroup()
+
+scatter_PDSIrecon <- 
+  ggplot(plot_df_recon, aes(x = PDSI, y = PCWD, shape = PDSI_type, color = PDSI_type)) +
+  geom_point(alpha = 0.5, size = 1.5) +  # rasterized points
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.2) +
+  facet_wrap2(
+    ~region,
+    scales = "free",
+    strip = strip_themed(
+      background_x = elem_list_rect(fill = scales::alpha(region_cols, 0.6))
+    )
+  ) +
+  scale_color_manual(
+    name = "Annual scPDSI",
+    values = c(
+      PDSI_min = "#C06C3E",
+      PDSI_mean = "#3B6FB6"
+    ),
+    labels = c(
+      PDSI_min = "min scPDSI",
+      PDSI_mean = "mean scPDSI"
+    )
+  ) +
+  scale_shape_manual(
+    name = "Annual scPDSI",
+    values = c(
+      PDSI_min = 17,
+      PDSI_mean = 16
+    ),
+    labels = c(
+      PDSI_min = "min scPDSI",
+      PDSI_mean = "mean scPDSI"
+    )
+  ) +
+    geom_text(
+    data = cor_df_recon_plot,
+    aes(x = x_pos, y = y_pos, label = label, color = PDSI_type),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    hjust = 1,
+    size = 4
+  )+
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.text = element_text(size=11),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 15, color = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11),
+    axis.title.x = element_text(size = 11),
+    axis.title.y = element_text(size = 11)
+  ) +
+  labs(
+    x = "scPDSI_AWCrecon",
+    y = "PCWD (mm)"
+  )
+
+###
+  
+positions_100 <- plot_df_100 %>%
+  group_by(region) %>%
+  summarise(
+    x_max = max(PDSI, na.rm = TRUE),
+    y_max = max(PCWD, na.rm = TRUE)
+  )
+
+cor_df_100_plot <- cor_df_100 %>%
+  left_join(positions_100, by = "region") %>%
+  group_by(region) %>%
+  mutate(
+    x_pos = x_max,
+    y_pos = y_max - (row_number() - 2) * 0.05 * y_max  # stagger vertically
+  ) %>%
+  ungroup()
+
+
+scatter_PDSI100 <- ggplot(plot_df_100, aes(x = PDSI, y = PCWD, shape = PDSI_type, color = PDSI_type)) +
+  geom_point(alpha = 0.5, size = 1.5) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.2) +
+  facet_wrap2(
+    ~region,
+    scales = "free",
+    strip = strip_themed(
+      background_x = elem_list_rect(fill = scales::alpha(region_cols, 0.6))
+    )
+  ) +
+  scale_color_manual(
+    name = "Annual scPDSI",
+    values = c(
+      PDSI_min = "#C06C3E",
+      PDSI_mean = "#3B6FB6"
+    ),
+    labels = c(
+      PDSI_min = "min scPDSI",
+      PDSI_mean = "mean scPDSI"
+    )
+  ) +
+  scale_shape_manual(
+    name = "Annual scPDSI",
+    values = c(
+      PDSI_min = 17,
+      PDSI_mean = 16
+    ),
+    labels = c(
+      PDSI_min = "min scPDSI",
+      PDSI_mean = "mean scPDSI"
+    )
+  ) +geom_text(
+    data = cor_df_100_plot,
+    aes(x = x_pos, y = y_pos, label = label, color = PDSI_type),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    hjust = 1,
+    size = 4
+  )+
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.text = element_text(size=11),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 15, color = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11),
+    axis.title.x = element_text(size = 11),
+    axis.title.y = element_text(size = 11)
+  ) +
+  labs(
+    x = "scPDSI_AWC100",
+    y = ""
+  )
+
+# ## save legend with larger scatter point size
+# ggsave(
+#   filename = here::here("figures/PDSI_scatter_legend.pdf"),
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 10,           # in inches
+#   height   = 6.5,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
+
+combined_PDSI_scatter <- plot_grid(
+  scatter_PDSIrecon, scatter_PDSI100,
+  ncol = 2,
+  nrow = 1,
+  rel_widths = c(1, 1),
+  align = "h",
+  axis = "tblr",
+  labels = c(
+    "a)",  "b) "
+  )
+  # label_size = 14,
+  # label_x = 0.09,
+  # hjust = 0,
+  # label_y = 0.95,
+  # vjust = 1
+)
+
+print(combined_PDSI_scatter)
+
+ggsave(
+  filename = here::here("figures/combined_scatterPDSI.pdf"),
+  plot     = combined_PDSI_scatter,
+  device   = cairo_pdf,    # better text rendering
+  width    = 12,           # in inches
+  height   = 7,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+

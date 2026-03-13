@@ -94,75 +94,173 @@ Apply bias correction for chosen overlap period (21:50) - excludes 60s with pote
 
 ```{r}
 #---------- Read in raw ModE-Sim regional aggregate data and merge epochs
-# ### read in ModE-Sim regional results
-# regional_results_1420 <- readRDS(here("data/regionalResults_1420_1.RData"))
-# regional_results_1850 <- readRDS(here("data/regionalResults_1850_1.RData"))
-# merged_results <- Map(rbind, regional_results_1420, regional_results_1850) # Stitch matrices together row-wise for each region
-# 
-# ### Remove m001_tidy for areas CAU, EAU, NAU, NZ, SAU, RFE, EAS, SEA
-# # List of regions where the first ensemble member should be removed
-# regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
-# 
-# # Loop through each specified region and remove the first column (m001_tidy) - bias over Australia
-# for (region in regions_to_modify) {
-#   merged_results[[region]] <- merged_results[[region]][, -1]
-# }
-# 
+### read in ModE-Sim regional results
+regional_results_1420 <- readRDS(here("data/regionalResults_1420_1.RData"))
+regional_results_1850 <- readRDS(here("data/regionalResults_1850_1.RData"))
+merged_results <- Map(rbind, regional_results_1420, regional_results_1850) # Stitch matrices together row-wise for each region
+
+### Remove m001_tidy for areas CAU, EAU, NAU, NZ, SAU, RFE, EAS, SEA
+# List of regions where the first ensemble member should be removed
+regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+
+# Loop through each specified region and remove the first column (m001_tidy) - bias over Australia
+for (region in regions_to_modify) {
+  merged_results[[region]] <- merged_results[[region]][, -1]
+}
+
 
 # saveRDS(regional_results_ERA5Land, file = here::here("data/regional_results_ERA5Land.rds"))
 
 
-# #install.packages("qmap") # uncomment if you haven't installed it
-# library(qmap)
-# library(Metrics)
-# 
-# corrected_full <- list()
-# 
-# for (region in names(regional_results_ERA5Land)) {
-#   
-#   obs <- regional_results_ERA5Land[[region]][1:30]  # [1:60] - 30 years (1970-1999)
-#   sim_overlap <- merged_results[[region]][551:580, ]  # 1970-1999 period for training as 60s have precip problems
-#   sim_full <- merged_results[[region]]  # 160 years
-#   
-#   corrected_matrix <- matrix(NA, nrow = nrow(sim_full), ncol = ncol(sim_full))
-#   colnames(corrected_matrix) <- colnames(sim_full)
-# 
-#   for (i in 1:ncol(sim_full)) {  #loop through ensemble members
-#     mod_train <- sim_overlap[, i]  # 60-year overlap
-#     mod_full <- sim_full[, i]      # 160-year full run
-#     
-#     # # Fit QM model on 60-year overlap on a parametric transfer function
-#     qm_model <- fitQmapPTF(obs = obs, mod = mod_train, wet.day = FALSE, qstep = 0.001)
-#     #
-#     # # Apply to full 160-year series
-#     corrected_matrix[, i] <- doQmapPTF(mod_full, qm_model)
-#   }
-# 
-#   corrected_full[[region]] <- corrected_matrix
-# }
-# 
-# ###save bias corrected ModE-Sim data: 
-# saveRDS(corrected_full, file = here::here("data/regionalResults_ModESim_bc.RData"))
+#install.packages("qmap") # uncomment if you haven't installed it
+library(qmap)
+library(Metrics)
+
+corrected_full <- list()
+
+for (region in names(regional_results_ERA5Land)) {
+
+  obs <- regional_results_ERA5Land[[region]][1:30]  # [1:60] - 30 years (1970-1999)
+  sim_overlap <- merged_results[[region]][551:580, ]  # 1970-1999 period for training as 60s have precip problems
+  sim_full <- merged_results[[region]]  # 160 years
+
+  corrected_matrix <- matrix(NA, nrow = nrow(sim_full), ncol = ncol(sim_full))
+  colnames(corrected_matrix) <- colnames(sim_full)
+
+  for (i in 1:ncol(sim_full)) {  #loop through ensemble members
+    mod_train <- sim_overlap[, i]  # 60-year overlap
+    mod_full <- sim_full[, i]      # 160-year full run
+
+    # # Fit QM model on 60-year overlap on a parametric transfer function
+    qm_model <- fitQmapPTF(obs = obs, mod = mod_train, wet.day = FALSE, qstep = 0.001)
+    #
+    # # Apply to full 160-year series
+    corrected_matrix[, i] <- doQmapPTF(mod_full, qm_model)
+  }
+
+  corrected_full[[region]] <- corrected_matrix
+}
+
+###save bias corrected ModE-Sim data:
+saveRDS(corrected_full, file = here::here("data/regionalResults_ModESim_bc.RData"))
 
 corrected_full <- readRDS(here("data/regionalResults_ModESim_bc.RData"))
 ```
 
+```{r}
+## Bias correction cross-validation: 
+library(qmap)
+library(Metrics)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
 
+set.seed(123)
+n_splits <- 10  # number of CV splits
+
+# Initialize a list to store CV results in long format
+cv_long <- list()
+
+for (region in names(regional_results_ERA5Land)) {
+  
+  obs <- regional_results_ERA5Land[[region]][1:30]
+  sim_overlap <- merged_results[[region]][551:580, ]
+  
+  # Store split results for this region
+  region_cv <- data.frame()
+  
+  for (s in 1:n_splits) {
+    # Randomly split 30 years into train (70%) and validation (30%)
+    train_idx <- sample(1:30, size = 21)
+    val_idx <- setdiff(1:30, train_idx)
+    
+    obs_train <- obs[train_idx]
+    obs_val <- obs[val_idx]
+    
+    sim_train <- sim_overlap[train_idx, ]
+    sim_val <- sim_overlap[val_idx, ]
+    
+    # Initialize matrices to store RMSE
+    rmse_raw <- numeric(ncol(sim_overlap))
+    rmse_corrected <- numeric(ncol(sim_overlap))
+    
+    for (i in 1:ncol(sim_overlap)) {
+      # Fit QM on training
+      qm_model <- fitQmapPTF(obs = obs_train, mod = sim_train[, i], wet.day = FALSE, qstep = 0.001)
+      # Corrected validation
+      sim_val_corrected <- doQmapPTF(sim_val[, i], qm_model)
+      
+      # Compute RMSE for raw and corrected
+      rmse_raw[i] <- rmse(obs_val, sim_val[, i])
+      rmse_corrected[i] <- rmse(obs_val, sim_val_corrected)
+    }
+    
+    # Combine into long format for this split
+    split_df <- data.frame(
+      region = region,
+      split = s,
+      ensemble = 1:ncol(sim_overlap),
+      raw = rmse_raw,
+      corrected = rmse_corrected
+    )
+    
+    # Pivot longer to have a 'type' column
+    split_df_long <- pivot_longer(split_df, cols = c("raw", "corrected"),
+                                  names_to = "type", values_to = "rmse")
+    
+    # Append to region CV
+    region_cv <- bind_rows(region_cv, split_df_long)
+  }
+  
+  # Store for all regions
+  cv_long[[region]] <- region_cv
+}
+
+# Combine all regions into a single data frame
+cv_long_df <- bind_rows(cv_long)
+
+# Plot RMSE comparison raw vs corrected
+RMSE_bc_boxplot <- ggplot(cv_long_df, aes(x = region, y = rmse, fill = type)) +
+  geom_boxplot(position = position_dodge(width = 0.1), linewidth=0.2, outlier.alpha = 0.4) +
+  scale_fill_manual(
+    values = c("raw" = "#FFBD00", "corrected" = "#255C99"),
+    labels = c("ModE-Sim (raw)", "ModESim* (bc)")  # Or customize as you like
+  ) +
+  labs(y = "RMSE", x = "Region", fill = "Simulation type",
+       title = "") +
+  theme_minimal()  +
+theme(axis.text.x = element_text(angle = 45, hjust = 1, color="black", size=11),
+    axis.text.y = element_text(size = 12, color="black"),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    legend.position = "none") + # anchor point of the legend box) +  # Rotate x-axis labels
+  labs(title = "",
+       y = "RMSE",
+       x = "",
+       fill = "Data Set")
+```
 
 Validation plots: 
 - violin plots for each region, showing the values from ModESim with ERA5 overlain to see where the match works well 
 - scatterplot where data should lie on 1:1 line if it represents well 
 
+
 ```{r}
-# # Convert ModESim data to long format
-# ModESim_long <- bind_rows(lapply(names(merged_results), function(region) {
-#   data.frame(
-#     Year = rep(1950:2009, times = 20),  # Repeat years for each ensemble member
-#     Value = as.vector(merged_results[[region]][531:590,]),  # Flatten matrix
-#     Region = region,
-#     Source = "ModESim"
-#   )
-# }))
+# Convert ModESim data to long format
+ModESim_long <- bind_rows(lapply(names(merged_results), function(region) {
+  mat <- corrected_full[[region]]
+  n_members <- ncol(mat)       # number of ensemble members (could be 19 or 20)
+  n_years <- length(years)                # 550
+  sub <- mat[seq_len(n_years), , drop = FALSE]  # take first 550 rows
+  data.frame(
+    Year = rep(1970:2009, times = n_members),  # Repeat years for each ensemble member
+    Value = as.vector(merged_results[[region]][551:590,]),  # Flatten matrix
+    Region = region,
+    Source = "ModESim"
+  )
+}))
 
 # Convert ModESim data to long format
 ModESim_long_bc <- bind_rows(lapply(names(corrected_full), function(region) {
@@ -172,10 +270,10 @@ ModESim_long_bc <- bind_rows(lapply(names(corrected_full), function(region) {
   sub <- mat[seq_len(n_years), , drop = FALSE]  # take first 550 rows
   
   data.frame(
-    Year   = rep(1950:2009, times = n_members), # repeat years accordingly
-    Value   = as.vector(mat[531:590, ]),           # flatten matrix
+    Year   = rep(1970:2009, times = n_members), # repeat years accordingly
+    Value   = as.vector(mat[551:590, ]),           # flatten matrix
     Region = region,
-    Source = "ModESim"
+    Source = "ModESim*"
   )
 }))
 
@@ -190,8 +288,8 @@ ERA5Land_long <- bind_rows(lapply(names(regional_results_ERA5Land), function(reg
 }))
 
 # Combine both datasets
-#combined_data_raw <- bind_rows(ModESim_long, ERA5Land_long)
-combined_data_bc <- bind_rows(ModESim_long_bc, ERA5Land_long) #bias corrected ModE-Sim
+combined_data_raw <- bind_rows(ModESim_long, ModESim_long_bc, ERA5Land_long)
+#combined_data_bc <- bind_rows(ModESim_long_bc, ERA5Land_long) #bias corrected ModE-Sim
 
 #### colours x-axis
 # Define continent assignments
@@ -204,6 +302,7 @@ continent_mapping <- list(
   "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
   "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
 )
+
 continent_colors <- c(
   "Europe" = "#F5B0CB",
   "North America" = "#236A3F",
@@ -228,9 +327,9 @@ for (continent in names(continent_mapping)) {
   for (region in regions) {
     if (region %in% unique_regions) {
       # Format the region label with the designated colour from continent_colors
-      region_color_labels[region] <- sprintf("<span style='color:%s;'>%s</span>", 
-                                               continent_colors[continent], 
-                                               region)
+      region_color_labels[region] <- sprintf('<span style="color:%s;">%s</span>', 
+                                        continent_colors[continent], 
+                                        region)
     }
   }
 }
@@ -238,56 +337,68 @@ for (continent in names(continent_mapping)) {
 # In case any regions haven't been matched, assign a default colour (e.g. black)
 for (region in unique_regions) {
   if (is.na(region_color_labels[region])) {
-    region_color_labels[region] <- sprintf("<span style='color:%s;'>%s</span>", "black", region)
+    region_color_labels[region] <- sprintf('<span style="color:%s;">%s</span>', "black", region)
   }
 }
 
-# Inspect the mapping to confirm:
-#print(region_color_labels)
 
-# # Plot the violin plot
-# ggplot(combined_data_raw, aes(x = Region, y = Value, fill = Source)) +
-#   geom_violin(scale = "width") +
-#   theme_minimal() +
-#   scale_fill_manual(
-#     values = c( "ERA5Land" = "#087E8B", "ModESim" = "#FF5A5F"),
-#     labels = c( "ERA5-Land", "ModE-Sim")  # Or customize as you like
-#   ) +
-#   scale_x_discrete(labels = region_color_labels) +  # Apply custom coloured labels
-#   theme(axis.text.x = element_markdown(angle = 90, hjust = 1, size = 12),
-#     legend.position = "none",
-#     axis.text.y = element_text(size = 12), 
-#     axis.title.x = element_text(size = 13),
-#     axis.title.y = element_text(size = 13),
-#     legend.title = element_text(face = "bold"),
-#     legend.text = element_text(size=12),) +  # Rotate x-axis labels
-#   labs(title = "ModE-Sim (RAW) vs ERA5-Land by Region (1950-2009)",
-#        y = "PCWD Value [mm]",
-#        x = "Region",
-#        fill = "Dataset")
-
+library(ggtext)  # <-- needed to render markdown/html in ggplot
 
 # Plot the violin plot
-ggplot(combined_data_bc, aes(x = Region, y = Value, fill = Source)) +
-  geom_violin(scale = "width") +
+bc_violin <- ggplot(combined_data_raw, aes(x = Region, y = Value, fill = Source)) +
+  geom_violin(scale = "width", linewidth=0.2, adjust = .6) +
   theme_minimal() +
   scale_fill_manual(
-    values = c( "ERA5Land" = "#087E8B", "ModESim" = "#FF5A5F"),
-    labels = c( "ERA5-Land", "ModE-Sim_bc")  # Or customize as you like
+    values = c( "ERA5Land" = "#B3001B", "ModESim" = "#FFBD00", "ModESim*" = "#255C99"),
+    labels = c(  "ERA5-Land", "ModE-Sim (raw)", "ModESim* (bc)")  # Or customize as you like
   ) +
-  scale_x_discrete(labels = region_color_labels) +  # Apply custom coloured labels
-  theme(axis.text.x = element_markdown(angle = 90, hjust = 1, size = 12),
-    legend.position = "none",
-    axis.text.y = element_text(size = 12), 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, color="black", size=11),
+    axis.text.y = element_text(size = 12, color="black"),
     axis.title.x = element_text(size = 13),
     axis.title.y = element_text(size = 13),
     legend.title = element_text(face = "bold"),
-    legend.text = element_text(size=12),) +  # Rotate x-axis labels
-  labs(title = "ModE-Sim (BC) vs ERA5-Land by Region (1950-2009)",
-       y = "PCWD Value [mm]",
+    legend.text = element_text(size=12),
+    legend.position = c(0.2, 0.95),  # top-right corner inside plot
+    legend.justification = c("right", "top")) + # anchor point of the legend box) +  # Rotate x-axis labels
+  labs(title = "",
+       y = "PCWD [mm]",
        x = "Region",
-       fill = "Dataset")
+       fill = "Data Set")
 
+
+```
+
+```{r}
+## combine bc plots for SI: 
+combined_bc_plots <- plot_grid(
+  RMSE_bc_boxplot, bc_violin,
+  ncol = 1,
+  nrow = 2,
+  rel_widths = c(1, 1),
+  align = "h",
+  axis = "tblr",
+  labels = c(
+    "a)",  "b) "
+  )
+  # label_size = 14,
+  # label_x = 0.09,
+  # hjust = 0,
+  # label_y = 0.95,
+  # vjust = 1
+)
+
+combined_bc_plots
+
+ggsave(
+  filename = here::here("figures/combined_bc_plots.pdf"),
+  plot     = combined_bc_plots,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 7.5,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
 ```
 
 
@@ -1800,7 +1911,7 @@ ggsave(
 
 ```
 
-## Assessing the change in frequency of an ERA5 5-year drought events (Moderate drought) for context
+## Assessing the change in frequency of an ERA5 30-year drought events (Moderate drought) for context
 
 ```{r functions for RP calc}
 # From https://geco-bern.github.io/cwd/articles/cwd_example.html: 
@@ -1831,10 +1942,10 @@ extract_scale <- function(mod){
 
 
 #### rolling effective RP for all regions
-calculate 5 yr event return periods
+calculate 30 yr event return periods
 ```{r}
 #################### Calc for ModE-SIm ######################################
-use_rp <- 5    # return period of interest
+use_rp <- 30    # return period of interest
 nyears <- 30   # window size
 
 path <- here::here("data/volc_impact_aggregates/collected_p_pet")
@@ -1844,129 +1955,455 @@ folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m0
 n_ens <- unique(basename(folders))[1:20]
 # Add "_tidy" to each element
 n_ens <- paste0(n_ens, "_tidy")
+all_members <- n_ens
 
 # Store output
 EVA_regional_ensemble <- list()
 
 for (region in names(corrected_full)) {
-  result_array_region_BL <- corrected_full[[region]][551:580,]  # [time, ensemble]
-  result_array_region <- corrected_full[[region]]                         # [590, 20]
-  
-  # ----- Fit pooled baseline -----
-  baseline_pooled <- as.vector(result_array_region_BL)
-  fit_ref <- extRemes::fevd(baseline_pooled, type = "Gumbel", method = "MLE", units = "years")
-  cwd_ref <- extRemes::return.level(fit_ref, return.period = use_rp)
-  
-    # Choose ensemble members dynamically - exclude m001 for Australia and South East Asia 
+
+  # Full matrix for this region
+  result_array_region <- corrected_full[[region]]  # [590, 20]
+
+  # Determine which ensemble members to include
   if (region %in% regions_to_modify) {
-    n_ens <- n_ens[n_ens != "m001_tidy"]  # Skip m001
+    ens_cols <- all_members[all_members != "m001_tidy"]
   } else {
-    n_ens <- n_ens
+    ens_cols <- all_members
   }
 
-  region_df_list <- list()
+  # Baseline: last 30 years, pooled across selected members
+  result_array_region_BL <- result_array_region[551:580, ens_cols]
+  baseline_pooled <- as.vector(result_array_region_BL)
+  fit_ref <- fevd(baseline_pooled, type = "Gumbel", method = "MLE", units = "years")
+  cwd_ref <- return.level(fit_ref, return.period = use_rp)
 
-  for (ens_member in n_ens) {
-    # Initialize return period time series
-    rp_window <- rep(NA, nrow(result_array_region) - nyears + 1)
+  # Initialize return period vector (pooled across ensemble)
+  rp_window <- rep(NA, nrow(result_array_region) - nyears + 1)
 
-    for (window_start in 1:(nrow(result_array_region) - nyears + 1)) {
-      # Extract current 30-year window for this ensemble member
-      window_data <- result_array_region[window_start:(window_start + nyears - 1), ens_member]
-
-      # Fit Gumbel distribution
-      fit_window <- extRemes::fevd(window_data, type = "Gumbel")
-
-      # Estimate return period of the baseline event in this new fit
-      rp_window[window_start] <- calc_return_period(cwd_ref, extract_loc(fit_window), extract_scale(fit_window))
-    }
-
-    # Time vector (adjust if needed)
-    time_info <- seq(from = as.numeric(1420), to = as.numeric(2009))
-    ens_df <- data.frame(
-      time = time_info[15:575],
-      RP = rp_window,
-      region = region,
-      member = ens_member
-    )
-
-    region_df_list[[ens_member]] <- ens_df
+  for (window_start in 1:(nrow(result_array_region) - nyears + 1)) {
+    # Pool all selected ensemble members in this window
+    window_data <- as.vector(result_array_region[window_start:(window_start + nyears - 1), ens_cols])
+    
+    # Fit Gumbel distribution to pooled window
+    fit_window <- fevd(window_data, type = "Gumbel")
+    
+    # Calculate return period of baseline event
+    rp_window[window_start] <- calc_return_period(cwd_ref,
+                                                  extract_loc(fit_window),
+                                                  extract_scale(fit_window))
   }
 
-  # Combine all members for this region
-  EVA_regional_ensemble[[region]] <- do.call(rbind, region_df_list)
+  # Time vector
+  time_info <- seq(from = 1420, to = 2009)
+  region_df <- data.frame(
+    time = time_info[15:575],  # adjust to match rolling windows
+    RP = rp_window,
+    region = region
+  )
+
+  EVA_regional_ensemble[[region]] <- region_df
 }
 
 # Combine all regions
-combined_results_5yr_ens <- do.call(rbind, EVA_regional_ensemble)
-
+combined_results_30yr_pooled <- do.call(rbind, EVA_regional_ensemble)
 # Save to file
-#write.csv(combined_results_5yr_ens, file = here::here("data/5yr_return_periods_regions_ERA_members.csv"), row.names = FALSE) #ModESim all ensemble members
+write.csv(combined_results_30yr_pooled, file = here::here("data/30yr_pooled_return_periods_regions_ERA_members_test.csv"), row.names = FALSE) #ModESim all ensemble members
 
-################ now for ERA5 ###############################
-######################### --------------------- 5 year events -------------------------------------------------------------
-use_rp <- 5    # return period of two years
+```
+
+```{r}
+### test confidence interval estimation for ModE-Sim data also: 
+use_rp <- 30
+nyears <- 30
+path <- here::here("data/volc_impact_aggregates/collected_p_pet")
+folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}")
+n_ens <- unique(basename(folders))[1:20]
+n_ens <- paste0(n_ens, "_tidy")
+all_members <- n_ens
+
+EVA_regional_ensemble <- list()
+
+for (region in names(corrected_full)) {
+  
+  result_array_region <- corrected_full[[region]]  # [590, 20]
+  
+  # Determine which ensemble members to include
+  if (region %in% regions_to_modify) {
+    ens_cols <- all_members[all_members != "m001_tidy"]
+  } else {
+    ens_cols <- all_members
+  }
+  
+  # Baseline: pooled across selected members
+  result_array_region_BL <- result_array_region[551:580, ens_cols]
+  baseline_pooled <- as.vector(result_array_region_BL)
+  fit_ref <- fevd(baseline_pooled, type = "Gumbel", method = "MLE", units = "years")
+  cwd_ref <- return.level(fit_ref, return.period = use_rp)
+  
+  n_windows <- nrow(result_array_region) - nyears + 1
+  rp_window <- rep(NA, n_windows)
+  RP_lower  <- rep(NA, n_windows)
+  RP_upper  <- rep(NA, n_windows)
+  
+  for (window_start in 1:n_windows) {
+    
+    # Pool all selected ensemble members in this window
+    window_data <- as.vector(result_array_region[window_start:(window_start + nyears - 1), ens_cols])
+    n_pool      <- length(window_data)  # nyears * n_ensemble_members
+    
+    fit_window <- tryCatch(
+      fevd(window_data, type = "Gumbel", method = "MLE"),
+      error = function(e) NULL
+    )
+    if (is.null(fit_window)) next
+    
+    loc_hat   <- extract_loc(fit_window)
+    scale_hat <- extract_scale(fit_window)
+    
+    # Point estimate
+    rp_window[window_start] <- calc_return_period(cwd_ref, loc_hat, scale_hat)
+    
+    # Parametric bootstrap
+    R       <- 250
+    boot_rp <- numeric(R)
+    
+    for (b in seq_len(R)) {
+      # Draw bootstrap sample of same size as pooled window (nyears * n_members)
+      boot_sample <- revd(n_pool, loc = loc_hat, scale = scale_hat, shape = 0, type = "GEV")
+      
+      fit_boot <- tryCatch(
+        fevd(boot_sample, type = "Gumbel", method = "MLE"),
+        error = function(e) NULL
+      )
+      if (is.null(fit_boot)) { boot_rp[b] <- NA; next }
+      
+      boot_rp[b] <- calc_return_period(cwd_ref, extract_loc(fit_boot), extract_scale(fit_boot))
+    }
+    
+    RP_lower[window_start] <- quantile(boot_rp, 0.025, na.rm = TRUE)
+    RP_upper[window_start] <- min(quantile(boot_rp, 0.975, na.rm = TRUE), 200)
+  }
+  
+  time_info <- seq(from = 1420, to = 2009)
+  region_df <- data.frame(
+    time     = time_info[15:575],  # 561 windows → midpoints of 30yr windows
+    RP       = rp_window,
+    RP_lower = RP_lower,
+    RP_upper = RP_upper,
+    region   = region
+  )
+  
+  EVA_regional_ensemble[[region]] <- region_df
+}
+
+combined_results_30yr_pooled <- do.call(rbind, EVA_regional_ensemble)
+write.csv(combined_results_30yr_pooled, 
+          file = here::here("data/30yr_pooled_return_periods_regions_ERA_members_test.csv"), 
+          row.names = FALSE)
+
+```
+
+
+
+```{r}
+## test chunk to test different uncertainty sampling
+use_rp <- 30    # return period of two years
 nyears <- 30   # bin width
 
 # Initialize a list to store results for all regions
 EVA_regional <- list()
 
-# Loop through each region in regional_results
-for (region in names(regional_results_ERA5Land)) { #swap european_regions for regional_results for all regions
+for (region in names(regional_results_ERA5Land)) {
+  
   # Extract the result array for the current region
-  result_array_region_BL <- corrected_full[[region]][551:580,]  # [time, ensemble]
-  result_array_region <- regional_results_ERA5Land[[region]][20:75] #exclude 60s                         # [590, 20]
+  result_array_region_BL <- corrected_full[[region]][551:580, ]  # baseline [time, ensemble]
+  result_array_region <- regional_results_ERA5Land[[region]]     # full time series [time, ensemble]
   
   # ----- Fit pooled baseline -----
   baseline_pooled <- as.vector(result_array_region_BL)
-  fit_ref <- extRemes::fevd(baseline_pooled, type = "Gumbel", method = "MLE", units = "years")
-  cwd_ref <- extRemes::return.level(fit_ref, return.period = use_rp)
-
-  # initialise
+  fit_ref <- fevd(baseline_pooled, type = "Gumbel", method = "MLE", units = "years")
+  cwd_ref <- return.level(fit_ref, return.period = use_rp)
+  
+  # Initialize storage vectors
   rp_window <- rep(NA, length(result_array_region) - nyears + 1)
-
-  for (window_start in 1:(length(result_array_region) - nyears + 1)){
-
-    # Extract data for the current window
+  RP_lower <- rep(NA, length(result_array_region) - nyears + 1)
+  RP_upper <- rep(NA, length(result_array_region) - nyears + 1)
+  
+  for (window_start in 1:(length(result_array_region) - nyears + 1)) {
+  
     window_data <- result_array_region[window_start:(window_start + nyears - 1)]
-  
-    # Flatten the matrix into a single vector
     window_data <- as.vector(window_data)
-  
-    # Fit Gumbel distribution to the window data
-    fit_window <- fevd(window_data, type = "Gumbel")
-
-	  # determine return period of cwd_ref based on new fit (How much more/less probably is an event that corresponded to an X-yearly event in the reference period?)
-	  rp_window[window_start] <- calc_return_period(cwd_ref, extract_loc(fit_window), extract_scale(fit_window))
-
+    fit_window  <- fevd(window_data, type = "Gumbel", method = "MLE")
+    
+    loc_hat   <- extract_loc(fit_window)
+    scale_hat <- extract_scale(fit_window)
+    
+    # Point estimate
+    rp_window[window_start] <- calc_return_period(cwd_ref, loc_hat, scale_hat)
+    
+    # --- Parametric bootstrap over the WINDOW fit ---
+    # Sample new parameter sets from the fitted Gumbel, then ask:
+    # "what is the return period of cwd_ref under each bootstrap replicate?"
+    R <- 250
+    boot_rp <- numeric(R)
+    
+    n_pool <- length(window_data)   # same sample size as the original window
+    
+    for (b in seq_len(R)) {
+      # Draw a bootstrap sample from the fitted Gumbel
+      boot_sample <- revd(n_pool, loc = loc_hat, scale = scale_hat, shape = 0, type = "GEV")
+      
+      # Refit Gumbel to bootstrap sample
+      fit_boot <- tryCatch(
+        fevd(boot_sample, type = "Gumbel", method = "MLE"),
+        error = function(e) NULL
+      )
+      if (is.null(fit_boot)) {
+        boot_rp[b] <- NA
+        next
+      }
+      
+      # Compute return period of the FIXED baseline event under this bootstrap fit
+      boot_rp[b] <- calc_return_period(
+        cwd_ref,
+        extract_loc(fit_boot),
+        extract_scale(fit_boot)
+      )
+    }
+    
+    # 95% CI from bootstrap distribution
+    RP_lower[window_start] <- quantile(boot_rp, 0.025, na.rm = TRUE)
+    RP_upper[window_start] <- min(quantile(boot_rp, 0.975, na.rm = TRUE), 200) #set upper limit of return period
   }
-  # Create a dataframe for the current region
-  time_info <- seq(from = as.numeric(1970), to = as.numeric(2024))  # Replace with actual time if available
+  
+    # Time vector (match rolling windows)
+  time_info <- seq(from = 1970, to = 2024)
   region_df <- data.frame(
-    time = time_info[15:41],
+    time = time_info[15:40],
     RP = rp_window,
+    RP_lower = RP_lower,
+    RP_upper = RP_upper,
     region = region
   )
   
-  # Store the region's dataframe in the results list
   EVA_regional[[region]] <- region_df
 }
-  
-# Combine all region results into a single dataframe
-combined_results_5yr_ERA <- do.call(rbind, EVA_regional)
+
+# Combine all regions into one dataframe
+combined_results_30yr_ERA <- do.call(rbind, EVA_regional)
 
 # Save or process the combined dataframe
 # Example: Save to a CSV file
-write.csv(combined_results_5yr_ERA, here::here("data/5yr_return_periods_regions_ERA5Land.csv"), row.names = FALSE)
+write.csv(combined_results_30yr_ERA, here::here("data/30yr_pooled_return_periods_regions_ERA5Land_test.csv"), row.names = FALSE)
+
 
 ```
 
-### Frequency changes of 5-yr return period events for all IPCC regions (1420 - 2009 epoch):
+```{r}
+# Re-run bootstrap for first window and inspect the distribution
+window_first <- result_array_region[26:55]
+fit_first    <- fevd(window_first, type = "Gumbel", method = "MLE")
+loc_hat      <- extract_loc(fit_first)
+scale_hat    <- extract_scale(fit_first)
+
+set.seed(42)
+R <- 500
+boot_rp_first <- numeric(R)
+
+for (b in seq_len(R)) {
+  boot_sample <- revd(30, loc = loc_hat, scale = scale_hat, shape = 0, type = "GEV")
+  fit_boot    <- tryCatch(fevd(boot_sample, type = "Gumbel", method = "MLE"), error = function(e) NULL)
+  if (is.null(fit_boot)) { boot_rp_first[b] <- NA; next }
+  boot_rp_first[b] <- calc_return_period(cwd_ref, extract_loc(fit_boot), extract_scale(fit_boot))
+}
+
+# Inspect the distribution
+summary(boot_rp_first)
+quantile(boot_rp_first, c(0.025, 0.25, 0.5, 0.75, 0.975), na.rm = TRUE)
+hist(boot_rp_first, breaks = 50, main = "Bootstrap RP distribution - first window")
+```
+```{r}
+### check distribution of baseline and dataset
+
+# Compare the two baselines
+baseline_ensemble <- as.vector(corrected_full[[region]][551:580, ])
+baseline_ERA5Land <- result_array_region[1:30]  # or whatever your baseline slice is
+
+cat("Ensemble baseline - mean:", mean(baseline_ensemble), "sd:", sd(baseline_ensemble), "\n")
+cat("ERA5Land baseline - mean:", mean(baseline_ERA5Land), "sd:", sd(baseline_ERA5Land), "\n")
+cat("cwd_ref from ensemble:", cwd_ref, "\n")
+cat("cwd_ref from ERA5Land:", return.level(
+  fevd(baseline_ERA5Land, type = "Gumbel", method = "MLE"), 
+  return.period = use_rp), "\n")
+```
+
+
+
+```{r}
+################ now for ERA5 ###############################
+######################### --------------------- 5 year events -------------------------------------------------------------
+library(extRemes)
+# 
+# use_rp <- 30    # return period of two years
+# nyears <- 30   # bin width
+# 
+# # Initialize a list to store results for all regions
+# EVA_regional <- list()
+# 
+# for (region in names(regional_results_ERA5Land)) {
+#   
+#   # Extract the result array for the current region
+#   result_array_region_BL <- corrected_full[[region]][551:580, ]  # baseline [time, ensemble]
+#   result_array_region <- regional_results_ERA5Land[[region]]     # full time series [time, ensemble]
+#   
+#   # ----- Fit pooled baseline -----
+#   baseline_pooled <- as.vector(result_array_region_BL)
+#   fit_ref <- fevd(baseline_pooled, type = "Gumbel", method = "MLE", units = "years")
+#   cwd_ref <- return.level(fit_ref, return.period = use_rp)
+#   
+#   # Initialize storage vectors
+#   rp_window <- rep(NA, length(result_array_region) - nyears + 1)
+#   RP_lower <- rep(NA, length(result_array_region) - nyears + 1)
+#   RP_upper <- rep(NA, length(result_array_region) - nyears + 1)
+#   
+#   for (window_start in 1:(length(result_array_region) - nyears + 1)){
+#     
+#     # Extract data for the current window 
+#     window_data <- result_array_region[window_start:(window_start + nyears - 1)] # Flatten the matrix into a single vector 
+#     window_data <- as.vector(window_data)
+#     
+#     # Fit Gumbel
+#     fit_window <- fevd(window_data, type = "Gumbel", method = "MLE")
+#     
+#     # Compute return period of baseline event
+#     rp_window[window_start] <- calc_return_period(cwd_ref, extract_loc(fit_window), extract_scale(fit_window))
+#     
+#     # Compute 95% CI for magnitude, then convert to return period - parametric bootstrap to estimate confidence intervals
+#     ci_res <- ci(fit_window, 
+#              type = "return.level", 
+#              return.period = use_rp,
+#              method = "boot",
+#              R = 250,          # tested and seems stable enough without drawing too many samples (compute time okay)
+#              alpha = 0.05)
+#   
+#   RP_lower[window_start] <- calc_return_period(ci_res[1], extract_loc(fit_window), extract_scale(fit_window))
+#   RP_upper[window_start] <- calc_return_period(ci_res[3], extract_loc(fit_window), extract_scale(fit_window))
+#   }
+#   
+#   # Time vector (match rolling windows)
+#   time_info <- seq(from = 1970, to = 2024)
+#   region_df <- data.frame(
+#     time = time_info[15:40],
+#     RP = rp_window,
+#     RP_lower = RP_lower,
+#     RP_upper = RP_upper,
+#     region = region
+#   )
+#   
+#   EVA_regional[[region]] <- region_df
+# }
+# 
+# # Combine all regions into one dataframe
+# combined_results_30yr_ERA <- do.call(rbind, EVA_regional)
+# 
+# # Save or process the combined dataframe
+# # Example: Save to a CSV file
+# write.csv(combined_results_30yr_ERA, here::here("data/30yr_pooled_return_periods_regions_ERA5Land_ci250.csv"), row.names = FALSE)
+
+```
+
+```{r}
+# # Test with one window before running everything
+# some_window_data <- as.vector(regional_results_ERA5Land$WNA[21:50])
+# test_fit <- fevd(some_window_data, type = "Gumbel", method = "MLE")
+# ci_100  <- ci(test_fit, type = "return.level", return.period = 30, method = "boot", R = 100)
+# ci_250  <- ci(test_fit, type = "return.level", return.period = 30, method = "boot", R = 250)
+# ci_500  <- ci(test_fit, type = "return.level", return.period = 30, method = "boot", R = 500)
+# ci_1000 <- ci(test_fit, type = "return.level", return.period = 30, method = "boot", R = 1000)
+# print(rbind(ci_100,ci_250, ci_500, ci_1000))
+```
+
+
+
+test: 
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Filter for region MED
+med_data <- combined_results_30yr_ERA %>% 
+  filter(region == "MED")
+
+# Plot
+ggplot(med_data, aes(x = time, y = RP)) +
+  geom_line(color = "blue", linewidth = 1) +                        # main RP line
+  geom_ribbon(aes(ymin = RP_lower, ymax = RP_upper),           # uncertainty band
+              fill = "lightblue", alpha = 0.3) +
+  labs(
+    title = "Rolling 30-Year Return Period for MED",
+    x = "Year",
+    y = "Return Period (years)"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+```{r}
+#### ModE-Sim test plot: 
+
+# Filter for region MED
+med_data <- combined_results_30yr_pooled %>% 
+  filter(region == "MED")
+
+# Plot
+ggplot(med_data, aes(x = time, y = RP)) +
+  geom_line(color = "blue", linewidth = 1) +                        # main RP line
+  geom_ribbon(aes(ymin = RP_lower, ymax = RP_upper),           # uncertainty band
+              fill = "lightblue", alpha = 0.3) +
+  labs(
+    title = "Rolling 30-Year Return Period for MED - ModE-Sim",
+    x = "Year",
+    y = "Return Period (years)"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+
+```{r}
+## check stats
+# For first and last window, compare where cwd_ref sits relative to fitted params
+window_first <- result_array_region[1:30]
+window_last  <- result_array_region[26:55]
+
+fit_first <- fevd(window_first, type = "Gumbel", method = "MLE")
+fit_last  <- fevd(window_last,  type = "Gumbel", method = "MLE")
+
+cat("First window - loc:", extract_loc(fit_first), "scale:", extract_scale(fit_first), "\n")
+cat("Last window  - loc:", extract_loc(fit_last),  "scale:", extract_scale(fit_last),  "\n")
+cat("cwd_ref:", cwd_ref, "\n")
+
+# Standardised distance of cwd_ref from location
+cat("First window z-score:", (cwd_ref - extract_loc(fit_first)) / extract_scale(fit_first), "\n")
+cat("Last window  z-score:", (cwd_ref - extract_loc(fit_last))  / extract_scale(fit_last),  "\n")
+```
+
+
+
+### Frequency changes of 30-yr return period events for all IPCC regions (1420 - 2009 epoch):
 
 ```{r timeseries and map plots for each region, echo=FALSE, warning=FALSE, message=FALSE}
 #plot all ensemble members and ensemble mean: 
-combined_df <- read.csv(here::here("data/5yr_return_periods_regions_ERA_members.csv")) #ModESim all ensemble members
-combined_era <- read.csv(here::here("data/5yr_return_periods_regions_ERA5Land.csv"))
+combined_df <- read.csv(here::here("data/30yr_pooled_return_periods_regions_ERA_members_test.csv")) #ModESim all ensemble members
+combined_era <- read.csv(here::here("data/30yr_pooled_return_periods_regions_ERA5Land_test.csv"))
 
 
 ####################################### EUROPE #####################################
@@ -1979,39 +2416,42 @@ sel_regions <- "MED"
 # Filter combined data for timeseries 
 combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
 combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
-# Compute ensemble mean
-ensemble_mean_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
-
-ensemble_band_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(
-    RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.05, na.rm = TRUE),
-    RP_upper = quantile(RP, 0.95, na.rm = TRUE),
-    .groups = "drop"
-  )
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) 
+# %>%
+  # summarise(
+  #   RP_mean = mean(RP, na.rm = TRUE),
+  #   RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+  #   RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+  #   .groups = "drop"
+  # )
 
 ggplot() +
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim* Ensemble Range (5th-95th)"),alpha = 0.4) +
+  geom_ribbon(data = combined_df_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   # Ensemble mean line with legend
-  geom_line(data = ensemble_band_df, aes(x = time, y = RP_mean, color = "ModE-Sim* Mean (1420-2009)"), linewidth = 1) +
+  geom_line(data = combined_df_sel, aes(x = time, y = RP, color = "ModE-Sim* (1420-2009)"), linewidth = 1) +
   # ERA5 line with legend
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
   # Reference line (no legend)
-  geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
   # Labels and theme
   labs(
     x = "Year",
     y = "Effective Return Period",
-    title = "Frequency Change of 5-Year Events",
+    title = "Frequency Change of 30-Year Events",
     color = "Line",  # Legend titles
     fill = "Shading"
   ) +
-  scale_color_manual(values = c("ModE-Sim* Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim* Ensemble Range (5th-95th)" = "grey70")) +
+  scale_color_manual(values = c("ModE-Sim* (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -2038,39 +2478,41 @@ sel_regions <- "ARP"
 # Filter combined data for timeseries 
 combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
 combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
-# Compute ensemble mean
-ensemble_mean_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
-
-ensemble_band_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(
-    RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.05, na.rm = TRUE),
-    RP_upper = quantile(RP, 0.95, na.rm = TRUE),
-    .groups = "drop"
-  )
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+#     RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+#     .groups = "drop"
+#   )
 
 ggplot() +
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range (5th-95th)"),alpha = 0.4) +
+  geom_ribbon(data = combined_df_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   # Ensemble mean line with legend
-  geom_line(data = ensemble_band_df, aes(x = time, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  geom_line(data = combined_df_sel, aes(x = time, y = RP, color = "ModE-Sim* (1420-2009)"), linewidth = 1) +
   # ERA5 line with legend
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
   # Reference line (no legend)
-  geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
   # Labels and theme
   labs(
     x = "Year",
     y = "Effective Return Period",
-    title = "Frequency Change of 5-Year Events",
+    title = "Frequency Change of 30-Year Events",
     color = "Line",  # Legend titles
     fill = "Shading"
   ) +
-  scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble Range (5th-95th)" = "grey70")) +
+  scale_color_manual(values = c("ModE-Sim* (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -2097,39 +2539,41 @@ sel_regions <- "CAU"
 # Filter combined data for timeseries 
 combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
 combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
-# Compute ensemble mean
-ensemble_mean_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
-
-ensemble_band_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(
-    RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.05, na.rm = TRUE),
-    RP_upper = quantile(RP, 0.95, na.rm = TRUE),
-    .groups = "drop"
-  )
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+#     RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+#     .groups = "drop"
+#   )
 
 ggplot() +
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range (5th-95th)"),alpha = 0.4) +
+  geom_ribbon(data = combined_df_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   # Ensemble mean line with legend
-  geom_line(data = ensemble_band_df, aes(x = time, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  geom_line(data = combined_df_sel, aes(x = time, y = RP, color = "ModE-Sim* (1420-2009)"), linewidth = 1) +
   # ERA5 line with legend
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
   # Reference line (no legend)
-  geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
   # Labels and theme
   labs(
     x = "Year",
     y = "Effective Return Period",
-    title = "Frequency Change of 5-Year Events",
+    title = "Frequency Change of 30-Year Events",
     color = "Line",  # Legend titles
     fill = "Shading"
   ) +
-  scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble Range (5th-95th)" = "grey70")) +
+  scale_color_manual(values = c("ModE-Sim* (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -2214,39 +2658,41 @@ sel_regions <- "WNA"
 # Filter combined data for timeseries 
 combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
 combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
-# Compute ensemble mean
-ensemble_mean_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
-
-ensemble_band_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(
-    RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.05, na.rm = TRUE),
-    RP_upper = quantile(RP, 0.95, na.rm = TRUE),
-    .groups = "drop"
-  )
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+#     RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+#     .groups = "drop"
+#   )
 
 ggplot() +
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range (5th-95th)"),alpha = 0.4) +
+  geom_ribbon(data = combined_df_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   # Ensemble mean line with legend
-  geom_line(data = ensemble_band_df, aes(x = time, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  geom_line(data = combined_df_sel, aes(x = time, y = RP, color = "ModE-Sim* (1420-2009)"), linewidth = 1) +
   # ERA5 line with legend
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
   # Reference line (no legend)
-  geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
   # Labels and theme
   labs(
     x = "Year",
     y = "Effective Return Period",
-    title = "Frequency Change of 5-Year Events",
+    title = "Frequency Change of 30-Year Events",
     color = "Line",  # Legend titles
     fill = "Shading"
   ) +
-  scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble Range (5th-95th)" = "grey70")) +
+  scale_color_manual(values = c("ModE-Sim* (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -2395,8 +2841,8 @@ warp_time <- function(year) {
 
 
 #plot all ensemble members and ensemble mean: 
-combined_df <- read.csv(here::here("data/5yr_return_periods_regions_ERA_members.csv"))
-combined_era <- read.csv(here::here("data/5yr_return_periods_regions_ERA5Land.csv"))
+combined_df <- read.csv(here::here("data/30yr_pooled_return_periods_regions_ERA_members_test.csv"))
+combined_era <- read.csv(here::here("data/30yr_pooled_return_periods_regions_ERA5Land_test.csv"))
 
 ####################################### EUROPE #####################################
 ##### Step 2: Filter European regions for the map and timeseries
@@ -2408,22 +2854,22 @@ sel_regions <- "MED"
 # Filter combined data for timeseries 
 combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
 combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
-# Compute ensemble mean
-ensemble_mean_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
-
-ensemble_band_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(
-    RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.0, na.rm = TRUE),
-    RP_upper = quantile(RP, 1, na.rm = TRUE),
-    .groups = "drop"
-  )
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+#     RP_upper = quantile(RP, 1, na.rm = TRUE),
+#     .groups = "drop"
+#   )
 
 # Apply to both datasets
-ensemble_band_df$time_warped <- warp_time(ensemble_band_df$time)
+combined_df_sel$time_warped <- warp_time(combined_df_sel$time)
 combined_era_sel$time_warped <- warp_time(combined_era_sel$time)
 
 # 3. Define range for highlight box
@@ -2436,13 +2882,15 @@ rollingRP_MED <- ggplot() +
 # geom_rect(aes(xmin = highlight_xmin, xmax = highlight_xmax, ymin = 0.8, ymax = 110),
 #           fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
   geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
-  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
-                                           fill = "ModE-Sim Ensemble Range"), alpha = 0.4) +
-  geom_line(data = ensemble_band_df, aes(x = time_warped, y = RP_mean,
+  geom_ribbon(data = combined_df_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
+  geom_line(data = combined_df_sel, aes(x = time_warped, y = RP,
                                          color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  geom_ribbon(data = combined_era_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
   geom_line(data = combined_era_sel, aes(x = time_warped, y = RP,
                                          color = "ERA5 (1970-2024)"), linewidth = 1) +
-  geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
   
   # Custom x-axis ticks: use original years as labels
   scale_x_continuous(
@@ -2451,10 +2899,10 @@ rollingRP_MED <- ggplot() +
     name = ""
   ) +
   scale_y_log10(name = expression("Effective Return Period"),
-        breaks = c(1, 2, 5, 10, 20, 50, 100),
-  labels = c("1", "2", "5", "10", "20", "50", "100")) +  # Log scale for y-axis
+        breaks = c(1, 2, 5, 10, 20, 50, 100, 150),
+  labels = c("1", "2", "5", "10", "20", "50", "100", "150")) +  # Log scale for y-axis
   scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble Range" = "grey70")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
   labs(title = "", color = "Line", fill = "Shading") +
   theme_classic() +
   theme(
@@ -2462,7 +2910,7 @@ rollingRP_MED <- ggplot() +
     plot.title = element_text(hjust = 0.5, face = "bold"),
     axis.text.x = element_text(angle = 45, hjust = 1),
     text = element_text(size=13),
-    strip.background = element_rect(fill = "#F5B0CB"),
+    strip.background = element_rect(fill = scales::alpha("#F5B0CB", 0.6)),
     axis.title = element_text(size=12)
   ) +
   facet_wrap(~region, scales = "free_y")+
@@ -2476,22 +2924,22 @@ sel_regions <- "ARP"
 # Filter combined data for timeseries 
 combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
 combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
-# Compute ensemble mean
-ensemble_mean_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
-
-ensemble_band_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(
-    RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.0, na.rm = TRUE),
-    RP_upper = quantile(RP, 1, na.rm = TRUE),
-    .groups = "drop"
-  )
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+#     RP_upper = quantile(RP, 1, na.rm = TRUE),
+#     .groups = "drop"
+#   )
 
 # Apply to both datasets
-ensemble_band_df$time_warped <- warp_time(ensemble_band_df$time)
+combined_df_sel$time_warped <- warp_time(combined_df_sel$time)
 combined_era_sel$time_warped <- warp_time(combined_era_sel$time)
 
 # 3. Define range for highlight box
@@ -2504,13 +2952,15 @@ rollingRP_ARP <- ggplot() +
   #         fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
   geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range"),alpha = 0.4) +
+  geom_ribbon(data = combined_df_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   # Ensemble mean line with legend
-  geom_line(data = ensemble_band_df, aes(x = time_warped, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  geom_line(data = combined_df_sel, aes(x = time_warped, y = RP, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  geom_ribbon(data = combined_era_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
   # ERA5 line with legend
   geom_line(data = combined_era_sel, aes(x = time_warped, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
   # Reference line (no legend)
-  geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
     # Custom x-axis ticks: use original years as labels
   scale_x_continuous(
     breaks = warp_time(c( 1500, 1600, 1700, 1800, 1900, 1950, 1970, 1990, 2010)),
@@ -2518,8 +2968,8 @@ rollingRP_ARP <- ggplot() +
     name = "Year"
   ) +
   scale_y_log10(name = expression("Effective Return Period"),
-        breaks = c(2, 5, 10, 20, 30),
-  labels = c( "2", "5", "10", "20", "30")) +  # Log scale for y-axis
+        breaks = c(2, 5, 10, 20, 30, 50, 70),
+  labels = c( "2", "5", "10", "20", "30", "50", "70")) +  # Log scale for y-axis
   # Labels and theme
   labs(
     title = "",
@@ -2527,14 +2977,14 @@ rollingRP_ARP <- ggplot() +
     fill = "Shading"
   ) +
   scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble Range" = "grey70")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
   theme_classic() +
   theme(
     legend.position = "none",
     plot.title = element_text(hjust = 0.5, face = "bold"),
     axis.text.x = element_text(angle = 45, hjust = 1),
     text = element_text(size=13),
-    strip.background = element_rect(fill = "#E5973B"),
+    strip.background = element_rect(fill =  scales::alpha("#E5973B", 0.6)),
     axis.title = element_text(size=12)
   ) +
   facet_wrap(~region, scales = "free_y")+
@@ -2551,22 +3001,22 @@ sel_regions <- "CAU"
 # Filter combined data for timeseries 
 combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
 combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
-# Compute ensemble mean
-ensemble_mean_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
-
-ensemble_band_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(
-    RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.0, na.rm = TRUE),
-    RP_upper = quantile(RP, 1, na.rm = TRUE),
-    .groups = "drop"
-  )
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+#     RP_upper = quantile(RP, 1, na.rm = TRUE),
+#     .groups = "drop"
+#   )
 
 # Apply to both datasets
-ensemble_band_df$time_warped <- warp_time(ensemble_band_df$time)
+combined_df_sel$time_warped <- warp_time(combined_df_sel$time)
 combined_era_sel$time_warped <- warp_time(combined_era_sel$time)
 
 # 3. Define range for highlight box
@@ -2579,21 +3029,23 @@ rollingRP_CAU <-ggplot() +
   #         fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
   geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range"),alpha = 0.4) +
+  geom_ribbon(data = combined_df_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   # Ensemble mean line with legend
-  geom_line(data = ensemble_band_df, aes(x = time_warped, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  geom_line(data = combined_df_sel, aes(x = time_warped, y = RP, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
   # ERA5 line with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
   geom_line(data = combined_era_sel, aes(x = time_warped, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
   # Reference line (no legend)
-  geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
   scale_x_continuous(
     breaks = warp_time(c(1500, 1600, 1700, 1800, 1900, 1950, 1970, 1990, 2010)),
     labels = c("1500", "1600", "1700", "1800", "1900", "1950", "1970", "1990", "2010"),
     name = "Year"
   ) +
   scale_y_log10(name = expression(""),
-        breaks = c(2, 5, 10, 20, 50, 100),
-  labels = c("2", "5", "10", "20", "50", "100")) +  # Log scale for y-axis
+        breaks = c(2, 5, 10, 20, 50, 100, 150),
+  labels = c("2", "5", "10", "20", "50", "100", "150")) +  # Log scale for y-axis
   # Labels and theme
   labs(
     title = "",
@@ -2601,7 +3053,7 @@ rollingRP_CAU <-ggplot() +
     fill = "Shading"
   ) +
   scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble Range" = "grey70")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -2609,7 +3061,7 @@ rollingRP_CAU <-ggplot() +
     strip.text = element_text(color = "white"),
     axis.text.x = element_text(angle = 45, hjust = 1),
     text = element_text(size=13),
-    strip.background = element_rect(fill = "#3C3980"),
+    strip.background = element_rect(fill =  scales::alpha("#3C3980", 0.6)),
     axis.title = element_text(size=12)
   ) +
   facet_wrap(~region, scales = "free_y")+
@@ -2626,21 +3078,21 @@ sel_regions <- "WNA"
 # Filter combined data for timeseries 
 combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
 combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
-# Compute ensemble mean
-ensemble_mean_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
-
-ensemble_band_df <- combined_df_sel %>%
-  group_by(region, time) %>%
-  summarise(
-    RP_mean = mean(RP, na.rm = TRUE),
-    RP_lower = quantile(RP, 0.0, na.rm = TRUE),
-    RP_upper = quantile(RP, 1, na.rm = TRUE),
-    .groups = "drop"
-  )
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+#     RP_upper = quantile(RP, 1, na.rm = TRUE),
+#     .groups = "drop"
+#   )
 # Apply to both datasets
-ensemble_band_df$time_warped <- warp_time(ensemble_band_df$time)
+combined_df_sel$time_warped <- warp_time(combined_df_sel$time)
 combined_era_sel$time_warped <- warp_time(combined_era_sel$time)
 
 # 3. Define range for highlight box
@@ -2653,21 +3105,23 @@ rollingRP_WNA <-ggplot() +
   #         fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
   geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
   # Uncertainty band with legend
-  geom_ribbon(data = ensemble_band_df, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble\nRange"),alpha = 0.4) +
+  geom_ribbon(data = combined_df_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
   # Ensemble mean line with legend
-  geom_line(data = ensemble_band_df, aes(x = time_warped, y = RP_mean, color = "ModE-Sim Mean\n(1420-2009)"), linewidth = 1) +
+  geom_line(data = combined_df_sel, aes(x = time_warped, y = RP, color = "ModE-Sim Mean\n(1420-2009)"), linewidth = 1) +
   # ERA5 line with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
   geom_line(data = combined_era_sel, aes(x = time_warped, y = RP, color = "ERA5-Land (1970-2024)"), linewidth = 1) +
   # Reference line (no legend)
-  geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
   scale_x_continuous(
     breaks = warp_time(c(1500, 1600, 1700, 1800, 1900, 1950, 1970, 1990, 2010)),
     labels = c("1500", "1600", "1700", "1800", "1900", "1950", "1970", "1990", "2010"),
     name = ""
   ) +
   scale_y_log10(name = expression(""),
-        breaks = c(2, 5, 10, 20, 30),
-  labels = c("2", "5", "10", "20", "30")) +  # Log scale for y-axis
+        breaks = c(2, 5, 10, 20, 30, 50, 70),
+  labels = c("2", "5", "10", "20", "30", "50", "70")) +  # Log scale for y-axis
   # Labels and theme
   labs(
     title = "",
@@ -2675,20 +3129,26 @@ rollingRP_WNA <-ggplot() +
     fill = "Shading"
   ) +
   scale_color_manual(values = c("ModE-Sim Mean\n(1420-2009)" = "black", "ERA5-Land (1970-2024)" = "#B3001B")) +
-  scale_fill_manual(values = c("ModE-Sim Ensemble\nRange" = "grey70")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
   theme_classic() +
   theme(
-    legend.position = "right",
+    legend.position = "none",
     plot.title = element_text(hjust = 0.5, face = "bold"),
     strip.text = element_text(color= "white"),
     axis.text.x = element_text(angle = 45, hjust = 1),
     text = element_text(size=13),
-    strip.background = element_rect(fill = "#236A3F"),
+    strip.background = element_rect(fill =  scales::alpha("#236A3F", 0.6)),
     axis.title = element_text(size=12),
     legend.title = element_text(face = "bold")
   ) +
   facet_wrap(~region, scales = "free_y")+
     annotation_logticks()
+
+rollingRP_MED 
+rollingRP_ARP
+rollingRP_CAU 
+rollingRP_WNA
+
 
 #### combine plots in grid and save
 rollingRP_MED2 <- rollingRP_MED + theme(plot.margin = margin(t = 10, r = 10, b = 5, l = 5))
@@ -2728,37 +3188,59 @@ ggsave(
   bg       = "white"       # white background
 )
 
-ggsave(
-  filename = here::here("figures/rollingRP_legend.pdf"),
-  plot     = rollingRP_WNA,
-  device   = cairo_pdf,    # better text rendering
-  width    = 10,           # in inches
-  height   = 6.5,            # in inches
-  units    = "in",
-  dpi      = 300,          # for raster elements (if any)
-  bg       = "white"       # white background
-)
+# ggsave(
+#   filename = here::here("figures/rollingRP_legend.pdf"),
+#   plot     = rollingRP_WNA,
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 10,           # in inches
+#   height   = 6.5,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
 
 ```
+
+##### DO THIS ANALYSIS FOR THE SAME PERIODS AS FOR THE INTENSITY 
 
 How many regions experience a doubling in return period (below every 2.5) in the period 2000 - 2024? 
 
 ```{r}
+## remove SAH from quantitative results
+combined_era <- combined_era %>% filter(region != "SAH")
+
 regions_with_high_RP <- combined_era %>%
-  filter(time >= 2000, time <= 2024, RP <= 2.5) %>%
+  filter(time >= 2000, time <= 2024, RP <= 15) %>%
   distinct(region)
 
 regions_with_high_RP
 
 combined_era %>%
-  filter(time >= 2000, time <= 2024, RP <= 2.5) %>%
+  filter(time >= 2000, time <= 2024, RP <= 15) %>%
   distinct(region) %>%
   count()
 ```
 How many regions lie outside the range of return periods covered in the last 600 years? 
 ```{r}
+## remove Sahara: 
+combined_df <- combined_df %>% filter(region != "SAH")
+
 # 1. Get reference ranges (1434–1999) for each region
-ref_range <- combined_df %>%
+ref_range_short <- combined_df %>%
+  filter(time >= 1975, time <= 1999) %>%
+  group_by(region) %>%
+  summarise(ref_min = min(RP, na.rm = TRUE),
+            ref_max = max(RP, na.rm = TRUE),
+            .groups = "drop")
+  
+ref_range_medium <- combined_df %>%
+  filter(time >= 1850, time <= 1999) %>%
+  group_by(region) %>%
+  summarise(ref_min = min(RP, na.rm = TRUE),
+            ref_max = max(RP, na.rm = TRUE),
+            .groups = "drop")
+  
+ref_range_long <- combined_df %>%
   filter(time <= 1999) %>%
   group_by(region) %>%
   summarise(ref_min = min(RP, na.rm = TRUE),
@@ -2766,16 +3248,140 @@ ref_range <- combined_df %>%
             .groups = "drop")
 
 # 2. Compare modern period (2000–2024) to reference range
-modern_outside <- combined_era %>%
+modern_outside_short <- combined_era %>%
   filter(time >= 2000, time <= 2024) %>%
-  left_join(ref_range, by = "region") %>%
+  left_join(ref_range_short, by = "region") %>%
+  filter(RP < ref_min) %>%
+  distinct(region)
+
+modern_outside_medium <- combined_era %>%
+  filter(time >= 2000, time <= 2024) %>%
+  left_join(ref_range_medium, by = "region") %>%
+  filter(RP < ref_min) %>%
+  distinct(region)
+
+modern_outside_long <- combined_era %>%
+  filter(time >= 2000, time <= 2024) %>%
+  left_join(ref_range_long, by = "region") %>%
   filter(RP < ref_min) %>%
   distinct(region)
 
 # 3. Count how many regions
-n_regions_outside <- nrow(modern_outside)
+n_regions_outside_short <- nrow(modern_outside_short)
+n_regions_outside_medium <- nrow(modern_outside_medium)
+n_regions_outside_long <- nrow(modern_outside_long)
 
-n_regions_outside
+print(paste0("Short context: have ", n_regions_outside_short, " regions outside the ref (1975-1999)."))
+print(paste0("Medium context: have ", n_regions_outside_medium, " regions outside the ref (1850-1999)."))
+print(paste0("Long context: have ", n_regions_outside_long, " regions outside the ref (1420-1999)."))
+
+modern_outside_long
+```
+
+##### CREATE MAP SHOWING WHERE FREQUENCY IS OUTSIDE OF REFERENCE BEST ESTIMATE
+
+Plot which regions are unprecedented and which record shattering
+
+```{r}
+# Load reference regions and coastlines:
+load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
+refregions_sf <- st_as_sf(IPCC_WGI_reference_regions_v4)
+refregions_sf <- refregions_sf %>% rename(region = Acronym)
+temp.dir <- tempdir()
+unzip(here::here("data/Reference_regions/ne_110m_coastline.zip"), exdir = temp.dir)
+coastLines <- st_read(dsn = temp.dir, layer = "ne_110m_coastline")
+
+# Load land data for filling continents
+land <- ne_countries(scale = "medium", returnclass = "sf")
+
+colors_map <- c("exceeding long term\nreference (1420-1999)" = "#D46273",
+                "within long term\nreference (1420-1999)"  = "#301934")
+
+# Get the unique regions that actually appear in your data
+valid_regions <- unique(combined_df$region)
+
+# Build color_cat — only for regions present in combined_df
+region_cats <- refregions_sf %>%
+  st_drop_geometry() %>%
+  dplyr::select(region) %>%
+  filter(region %in% valid_regions) %>%          # ← drop ocean/unused regions
+  mutate(color_cat = ifelse(
+    region %in% modern_outside_long$region,
+    "exceeding long term\nreference (1420-1999)",                          # ← must match colors_map key
+    "within long term\nreference (1420-1999)"                            # ← must match colors_map key
+  ))
+
+# Join categories onto the spatial data (only matched regions survive)
+shown_sf <- refregions_sf %>%
+  inner_join(region_cats %>% dplyr::select(region, color_cat), by = "region")
+
+# Centroids for labels
+pts <- shown_sf %>%
+  st_centroid() %>%
+  mutate(label = region)
+
+# Build the map
+map_RP <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour = "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Return Period category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  theme_void() +
+  theme(
+    plot.margin          = margin(0, 0, 0, 0),
+    legend.position      = c(0.05, 0.05),
+    legend.justification = c("left", "bottom"),
+    legend.background    = element_blank(),
+    legend.title         = element_text(face = "bold")
+  )
+
+map_RP
+```
+
+Combine Rolling RP plots and map into one
+```{r}
+# Step 2: stack the panel grid on top of the map
+final_plot <- plot_grid(
+  combined_rollingRP,
+  map_RP,
+  ncol = 1,
+  labels = c("", "e)"),      # leave panels labelled as-is, add e) to map
+  label_size = 14,
+  label_x = 0.01,
+  hjust = 0,
+  rel_heights = c(2, 1)      # panels take 2/3, map takes 1/3 — adjust to taste
+)
+
+final_plot
+
+ggsave(
+  filename = here::here("figures/RP_rolling_map.pdf"),
+  plot     = final_plot,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 9,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
 ```
 
 
@@ -3166,6 +3772,8 @@ ggsave(
 )
 
 ```
+
+
 ```{r}
 # Calculate the correlation and mean bias between ERA5-Land and ModE-Sim* 5-year events during overlap 
 summary_stats <- tibble(
