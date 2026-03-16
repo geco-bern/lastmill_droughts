@@ -185,7 +185,7 @@ ggplot() +
 
 ## 30-year extreme value
 
-Could also use a 5-year extreme value.
+Could also use a 30-year extreme value.
 
 ```{r}
 # Function: fit Gumbel with extRemes and estimate T-year return level

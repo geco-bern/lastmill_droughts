@@ -1,0 +1,229 @@
+---
+title: "Plots für Promotionsfeier"
+author: "Beni Stocker"
+date: "2025-08-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(slider)
+library(here)
+library(extRemes)
+```
+
+## Approach
+
+Determining whether 21st century droughts are unprecedented and quantifying their "extremeness" depends on the reference. Here, we determine these aspects based on alternative choices of the reference:
+
+1.  20th century climate reanalysis data (effectively 1970-1999)
+2.  Historical climate model simulation, single member (1850-1999)
+3.  Multi-centennial large ensemble (N = 20) climate model simulation (1420-1999)
+
+The magnitude of 21st century droughts are estimated based on climate reanalysis data for years 2000-2024.
+
+## Read data
+
+Interpreting the objects into nice and tidy data frames. Select only for one region ('MED' here).
+
+```{r}
+list_era5 <- read_rds(here("data/regional_results_ERA5Land.rds"))
+
+# extract region names
+regions <- names(list_era5)
+
+df_era5 <- tibble(
+  pcwd = list_era5$WCE
+  ) |> 
+  # not sure this is correct. Better to take years forward as part of the workflow. 
+  mutate(year = 1970:2024)
+
+extract_ensemble_number <- function(char){
+  char |> 
+    str_remove("_tidy") |> 
+    str_remove("m0") |> 
+    as.integer()
+}
+
+df_modesim <- read_rds(here("data/regional_results_ModESim_bc.rds"))$WCE |> 
+  as_tibble() |> 
+  # not sure this is correct. Better to take years forward as part of the workflow. 
+  mutate(year = 1420:2009)
+
+df_modesim_long <- df_modesim |> 
+  pivot_longer(cols = ends_with("_tidy"), names_to = "member", values_to = "pcwd", names_transform = extract_ensemble_number)
+```
+
+## Annual maxima values
+
+Determine single maximum in reference
+
+```{r}
+# considering single-member 1850-1900 as reference
+max_modesim_historical <- df_modesim_long |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(member) |> 
+  filter(pcwd == max(pcwd)) |> 
+  ungroup() |>
+  summarise(upper = max(pcwd), lower = min(pcwd))
+
+max_era5_ref <-  df_era5 |> 
+  filter(year %in% 1970:1999) |> 
+  filter(pcwd == max(pcwd))
+
+max_era5_modern <- df_era5 |> 
+  filter(year %in% 2000:2024) |> 
+  filter(pcwd == max(pcwd))
+```
+
+### Visualise
+
+#### Reanalysis only
+
+```{r}
+ggplot() +
+  geom_line(aes(year, pcwd), color = "tomato", data = df_era5) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_modern) +
+  geom_vline(xintercept = max_era5_modern$year, color = "tomato", linetype = "dotted") +
+  theme_classic() +
+  labs(
+    subtitle = "Klima-Reanalyse Daten (Beobachtungen) \nJährliche Höchstwerte, West- und Zentraleuropa",
+    x = "Jahr",
+    y = "PCWD (mm)"
+  )
+
+ggsave(
+    here("fig/pcwd_wce_era5.pdf"),
+    width = 4,
+    height = 3
+)
+```
+
+#### With ModE-Sim, 1 member
+
+```{r}
+# considering full time series and only one ensemble member
+use_member <- 3
+max_modesim_global <- df_modesim_long |> 
+  filter(member == use_member) |>
+  filter(pcwd == max(pcwd))
+
+ggplot() +
+  geom_line(
+    aes(year, pcwd, group = member), 
+    color = "grey40", 
+    data = df_modesim_long |> 
+        filter(member == use_member)
+    ) +
+  geom_line(aes(year, pcwd), color = "tomato", data = df_era5) +
+  geom_point(aes(year, pcwd), color = "grey40", size = 2, data = max_modesim_global) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_modern) +
+  geom_hline(yintercept = max_modesim_global$pcwd, alpha = 0.3, linewidth = 0.2) +
+  theme_classic() +
+  labs(
+    subtitle = "Klima-Reanalyse Daten und Modell, N = 1 \nJährliche Höchstwerte, West- und Zentraleuropa",
+    x = "Jahr",
+    y = "PCWD (mm)"
+  )
+
+ggsave(
+    here("fig/pcwd_wce_modesim1.pdf"),
+    width = 6,
+    height = 3
+)
+```
+
+#### With ModE-Sim, all members
+
+```{r}
+# considering full time series and all ensemble members
+max_modesim_global <- df_modesim_long |> 
+  filter(pcwd == max(pcwd))
+
+ggplot() +
+  geom_line(
+    aes(year, pcwd, group = member), 
+    alpha = 0.1, 
+    data = df_modesim_long
+    ) +
+  geom_line(aes(year, pcwd), color = "tomato", data = df_era5) +
+  geom_point(aes(year, pcwd), color = "grey40", size = 2, data = max_modesim_global) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_modern) +
+  geom_hline(yintercept = max_modesim_global$pcwd, alpha = 0.3, linewidth = 0.2) +
+  theme_classic() +
+  labs(
+    subtitle = "Klima-Reanalyse Daten und Modell, N = 20 \nJährliche Höchstwerte, West- und Zentraleuropa",
+    x = "Jahr",
+    y = "PCWD (mm)"
+  )
+
+ggsave(
+    here("fig/pcwd_wce_modesimALL.pdf"),
+    width = 6,
+    height = 3
+)
+```
+
+## 30-year extreme value
+
+Could also use a 5-year extreme value.
+
+```{r}
+# Function: fit Gumbel with extRemes and estimate T-year return level
+fit_gumbel_return <- function(x, T = 30) {
+  # Fit Gumbel (GEV with shape = 0)
+  fit <- fevd(x, type = "Gumbel")
+  
+  # Estimate T-year return level
+  rl <- unname(c(return.level(fit, return.period = T)))
+
+  return(rl)
+}
+```
+
+```{r}
+df_modesim_x30 <- df_modesim |> 
+  mutate(across(ends_with("_tidy"), ~slide_dbl(.x, fit_gumbel_return, .before = 29, .complete = TRUE))) |> 
+  pivot_longer(cols = ends_with("_tidy"), names_to = "member", values_to = "pcwdx30", names_transform = extract_ensemble_number)
+
+df_era5_x30 <- df_era5 |> 
+  mutate(across(pcwd, ~slide_dbl(.x, fit_gumbel_return, .before = 29, .complete = TRUE))) 
+```
+
+Determine single maximum in reference
+
+```{r}
+max_modesim_x30 <- df_modesim_x30 |> 
+  filter(pcwdx30 == max(pcwdx30, na.rm = TRUE))
+
+max_era5_x30 <- df_era5_x30 |> 
+  filter(pcwd == max(pcwd, na.rm = TRUE))
+
+level_recordshattering <- max_modesim_x30$pcwdx30 + 2 * sd(df_modesim_x30$pcwdx30, na.rm = TRUE)
+```
+
+### Visualise
+
+```{r}
+ggplot() +
+  geom_line(aes(year, pcwdx30, group = member), alpha = 0.3, data = df_modesim_x30) +
+  geom_line(aes(year, pcwd), color = "tomato", data = df_era5_x30) +
+  geom_point(aes(year, pcwdx30), alpha = 0.5, size = 2, data = max_modesim_x30) +
+  geom_point(aes(year, pcwd), color = "tomato", size = 2, data = max_era5_x30) +
+  geom_hline(yintercept = max_modesim_x30$pcwdx30, alpha = 0.3, linewidth = 0.2) +
+  theme_classic() +
+  labs(
+    subtitle = "Klima-Reanalyse Daten und Modell, N = 20 \n30-Jahr Extremereignis, West- und Zentraleuropa",
+    x = "Jahr",
+    y = "30-Jahr Extremwert PCWD (mm)"
+  )
+ggsave(
+    here("fig/pcwdx30_wce.pdf"),
+    width = 6,
+    height = 3
+)
+```
