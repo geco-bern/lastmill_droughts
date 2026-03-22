@@ -99,76 +99,6 @@ files <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020
 #ensemble_members <- regmatches(basename(files), regexpr("m[0-9]{3}", basename(files)))
 ensemble_members <- "m001"
 
-########## for 1420 to 2009, AWC recon data ###########################
-
-# Initialize a list to store results for all regions
-regional_results_AWC_recon <- list()
-
-# Loop over all regions
-for (region in regions) {
-  # Extract the spatial object corresponding to the current region
-  region_object <- refregions[c(region)]
-
-  # Check if the subset is valid
-  if (is.null(region_object)) {
-    warning(paste("Region not found:", region))
-    next
-  }
-
-  # Initialize a list to store spatial averages for each file in the current region
-  spatial_avg_list <- list()
-
-  for (i in seq_along(files)) {
-    file <- files[i]          # full path, used for loading
-    em   <- ensemble_members[i]  # clean ID like "m001", used as list key
-
-    # Check if both files exist
-    if (file.exists(file)) {
-      # Load grid data for each time period
-      grid <- loadGridData(dataset = file, var = "pdsi")
-
-      # Set spatial projection
-      grid <- setGridProj(grid = grid, proj = proj4string(refregions))
-
-      # Extract bounding box from region polygon
-      bbox <- bbox(region_object)
-      
-      # Crop to bounding box
-      grid_region <- subsetGrid(grid,
-                                 lonLim = c(bbox["x", "min"], bbox["x", "max"]),
-                                 latLim = c(bbox["y", "min"], bbox["y", "max"]),
-                                 outside = FALSE)
-
-      # Mask to actual polygon shape (not just bounding box rectangle)
-      coords <- getCoordinates(grid_region)
-      points_sp <- SpatialPoints(expand.grid(coords$x, coords$y),
-                                  proj4string = CRS(proj4string(refregions)))
-      inside <- !is.na(over(points_sp, region_object))
-      inside_matrix <- matrix(inside, nrow = length(coords$x), ncol = length(coords$y))
-      inside_matrix <- t(inside_matrix)  # now [lat x lon] to match grid_region$Data[t, lat, lon]
-      
-      for (t in 1:dim(grid_region$Data)[1]) {
-        grid_region$Data[t, , ][!inside_matrix] <- NA
-      }
-      
-      # Spatial average ignoring masked NAs
-      spatial_avg <- apply(grid_region$Data, 1, function(slice) {
-        mean(slice, na.rm = TRUE)
-      })
-      spatial_avg_list[[em]] <- spatial_avg  # keyed by "m001", "m002", etc.
-      
-    } else {
-      warning(paste("Missing data for ensemble member:", em))
-    }
-  }
-  # Combine all spatial averages into a single array for the current region
-  result_array_region <- do.call(cbind, spatial_avg_list)
-
-  # Store the result for the current region
-  regional_results_AWC_recon[[region]] <- result_array_region
-}
-#save calculated list
-saveRDS(regional_results_AWC_recon, file= here::here("data/regionalResults_scPDSI_1420_2009_AWCrecon_test.RData")) #AWCrecon 
 ```
 
 ```{r}
@@ -346,7 +276,13 @@ regional_PCWD[regions_present] <- lapply(
 rolling_means <- list()
 
 # Define window size
-window_size <- 30
+window_size <- 25
+half_window <- (window_size - 1) / 2
+
+start_year <- 1420
+end_year   <- 2009
+
+centers <- seq(start_year, end_year - window_size + 1) + half_window
 
 # Compute rolling means for each ensemble member
 for (region_name in names(regional_PCWD)) {
@@ -369,7 +305,7 @@ for (region_name in names(regional_PCWD)) {
 
 rolling_means_PCWD_long <-  do.call(rbind, lapply(names(rolling_means), function(region) {
   df <- as.data.frame(rolling_means[[region]])
-  df$time <- seq(1436, 1995)  # Adjust time range accordingly
+  df$time <- centers[1:nrow(df)]
   df$region <- region
   df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
   return(df_long)
@@ -387,7 +323,7 @@ anom_baseline <- list()
 for (region_name in names(rolling_means)) {
   rolling_mean_matrix <- rolling_means[[region_name]]
   
-  anom_baseline[[region_name]] <- mean(rolling_mean_matrix[1:560,], na.rm = TRUE)  ### for reference period of first 30 values: rolling_mean_matrix[1:30,]
+  anom_baseline[[region_name]] <- mean(rolling_mean_matrix, na.rm = TRUE)  ### for reference period of first 30 values: rolling_mean_matrix[1:30,]
 }
 
 # Initialize lists to store anomalies
@@ -420,7 +356,7 @@ for (region_name in names(ensemble_30anom)) {
 pooled_sd_by_region <- list()
 for (region_name in names(ensemble_30anom)) {
   # Extract all years of anomalies
-  all_years <- ensemble_30anom[[region_name]][1:560,]
+  all_years <- ensemble_30anom[[region_name]]
   
   # Compute pooled standard deviation over these values
   pooled_sd_by_region[[region_name]] <- sd(unlist(all_years), na.rm = TRUE)
@@ -429,7 +365,7 @@ for (region_name in names(ensemble_30anom)) {
 # Convert ensemble data into a long format for plotting individual members
 anoms_long <- do.call(rbind, lapply(names(ensemble_30anom), function(region) {
   df <- as.data.frame(ensemble_30anom[[region]])
-  df$time <- seq(1436, 1995)  # Adjust time range accordingly
+  df$time <- centers[1:nrow(df)]
   df$region <- region
   df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "anomalies")
   return(df_long)
@@ -563,7 +499,7 @@ plot_region_PCWD_ts <- function(region_code) {
        # "Ens_maximum"= "grey30"
       ),
       labels = c(
-        "Individual Members", "Ensemble Mean", "30-yr rolling\n Ensemble Mean"
+        "Individual Members", "Ensemble Mean", "25-yr rolling\nEnsemble Mean"
         #, "max PCWD"
         )
       ) +
@@ -573,7 +509,7 @@ plot_region_PCWD_ts <- function(region_code) {
     labs(x = "", y = "PCWD [mm]", color = "Data") +
     theme_classic(base_size = 14) +
     theme(axis.title.y = element_text(margin=margin(r=10)),
-          legend.position="none", legend.title = element_text(face="bold"))
+          legend.position="right", legend.title = element_text(face="bold"))
   
   return(p_ts)
 }
@@ -590,25 +526,28 @@ ts_ARP
 ts_CAU <- plot_region_PCWD_ts("CAU")
 ts_CAU
 
-# ggsave(
-#   filename = here::here("figures/PCWD_PDSI_comp_legend.pdf"),
-#   device   = cairo_pdf,    # better text rendering
-#   width    = 12,           # in inches
-#   height   = 6,            # in inches
-#   units    = "in",
-#   dpi      = 300,          # for raster elements (if any)
-#   bg       = "white"       # white background
-# )
+ggsave(
+  filename = here::here("figures/PCWD_PDSI_comp_legend.pdf"),
+  device   = cairo_pdf,    # better text rendering
+  width    = 12,           # in inches
+  height   = 6,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
 
 ```
 
 Plot comparison for PDSI: 
-- 30-year (monthly data!) rolling means as in PCWD - define period exceedances based on those (but can take absolute value as threshold as already defined as wet (exceeds positive 1) and dry (exceeds negative 1))
+- 25-year (monthly data!) rolling means as in PCWD - define period exceedances based on those (but can take absolute value as threshold as already defined as wet (exceeds positive 1) and dry (exceeds negative 1))
 
 ```{r}
 rolling_means_PDSI_AWC100 <- list()
 # Define window size
-window_size <- 30*12 # 30-year rolling windows on monthly data
+window_size <- 25*12 # 30-year rolling windows on monthly data
+half_window <- floor((window_size - 1) / 2)  # = 149
+
+centers <- time_dates[(1:(length(time_dates) - window_size + 1)) + half_window]
 
 # Compute rolling means for each ensemble member
 for (region_name in names(regional_test_PDSI_AWC100)) {
@@ -631,7 +570,7 @@ for (region_name in names(regional_test_PDSI_AWC100)) {
 
 rolling_means_PDSI_AWC100_long <-  do.call(rbind, lapply(names(rolling_means_PDSI_AWC100), function(region) {
   df <- as.data.frame(rolling_means_PDSI_AWC100[[region]])
-  df$time <- time_dates[192:6900]  # Adjust time range accordingly: -180 on both ends as window is 360 and also -12 as start in the second year as in PCWD
+  df$time <- centers[1:nrow(df)]  # Adjust time range accordingly: -180 on both ends as window is 300 and also -12 as start in the second year as in PCWD
   df$region <- region
   df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
   return(df_long)
@@ -639,8 +578,6 @@ rolling_means_PDSI_AWC100_long <-  do.call(rbind, lapply(names(rolling_means_PDS
 
 
 rolling_means_PDSI_AWCrecon <- list()
-# Define window size
-window_size <- 30*12 # 30-year rolling windows on monthly data
 
 # Compute rolling means for each ensemble member
 for (region_name in names(regional_test_PDSI_AWCrecon)) {
@@ -663,7 +600,7 @@ for (region_name in names(regional_test_PDSI_AWCrecon)) {
 
 rolling_means_PDSI_AWCrecon_long <-  do.call(rbind, lapply(names(rolling_means_PDSI_AWCrecon), function(region) {
   df <- as.data.frame(rolling_means_PDSI_AWCrecon[[region]])
-  df$time <- time_dates[192:6900]  # Adjust time range accordingly: -180 on both ends as window is 360 and also -12 as start in the second year as in PCWD
+  df$time <- centers[1:nrow(df)]  # Adjust time range accordingly: -180 on both ends as window is 360 and also -12 as start in the second year as in PCWD
   df$region <- region
   df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
   return(df_long)
@@ -786,7 +723,7 @@ plot_region_PDSI_AWC100_ts <- function(region_code) {
         # "Ens_maximum"= "grey30"
       ),
       labels = c(
-        "EMs - PDSI AWC_100", "Mean - PDSI AWC_100", "30-yr rolling\nmean - PDSI AWC_100"
+        "EMs - PDSI AWC_100", "Mean - PDSI AWC_100", "25-yr rolling\nmean - PDSI AWC_100"
         #, "ModE-Sim* - max PCWD"
         )
       ) +

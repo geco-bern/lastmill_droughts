@@ -35,11 +35,18 @@ A potential cumulative water deficit can be calculated using net radiation and t
 
 Read data from the example FLUNXET file contained in this repository.
 ```{r}
-df <- readRDS("/Users/phelpap/Library/CloudStorage/OneDrive-Personal/Dokumente/Bern/Master thesis/R/cwd/data/df_us-ton.rds") |> 
+df <- readRDS("/Users/phelpap/Library/CloudStorage/OneDrive-Personal/Dokumente/Bern/Master thesis/R/cwd/data/df_ch-lae.rds") |>
    # convert to from kPA to Pa (SI units are used for inputs to functions in the package)
    mutate(PA_F = 1e3 * PA_F) |>
    # Convert TIMESTAMP to Date format
    mutate(TIMESTAMP = ymd(TIMESTAMP))
+
+# 
+# df <- readRDS("/Users/phelpap/Library/CloudStorage/OneDrive-Personal/Dokumente/Bern/Master thesis/R/cwd/data/df_fr-pue.rds") |> 
+#    # convert to from kPA to Pa (SI units are used for inputs to functions in the package)
+#    mutate(PA_F = 1e3 * PA_F) |>
+#    # Convert TIMESTAMP to Date format
+#    mutate(TIMESTAMP = ymd(TIMESTAMP))
 
 visdat::vis_miss(df)
 ```
@@ -161,6 +168,30 @@ df |>
   scale_color_manual(values = c("P" = "#6B74DB", "PET" = "#F59430")) +
   labs(
     x = "Day of year",
+    y = expression(paste("Flux (mm d"^-1, ")")),
+    color = "Flux"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    legend.position = c(0.1,0.85),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+
+#over entire period: 
+
+df |> 
+  ggplot() +
+  # geom_line(aes(doy, et, color = "ET")) +
+  geom_line(aes(TIMESTAMP, P_F, color = "P")) +
+  geom_line(aes(TIMESTAMP, pet, color = "PET")) +
+  scale_color_manual(values = c("P" = "#6B74DB", "PET" = "#F59430")) +
+  labs(
+    x = "Time",
     y = expression(paste("Flux (mm d"^-1, ")")),
     color = "Flux"
   ) +
@@ -475,22 +506,96 @@ fLUE_PDSI <- ggplot() +
     legend.text = element_text(size=12)) 
 ```
 
+```{r}
+## calculate the values of PCWD and PDSI based on whether the fLUE drought is true or false: 
+# Add year-month to match PDSI
+fLUE2 <- fLUE %>%
+  mutate(yearmon = floor_date(date, "month"))
+
+pdsi2 <- pdsi_df %>%
+  mutate(yearmon = floor_date(TIMESTAMP, "month"))
+
+cwd2 <- out_cwd$df %>%
+  rename(date = TIMESTAMP)
+
+# Merge everything
+merged_df <- fLUE2 %>%
+  left_join(pdsi2 %>% select(yearmon, PDSI), by = "yearmon") %>%
+  left_join(cwd2 %>% select(date, deficit), by = "date")
+
+merged_df <- merged_df %>%
+  filter(!is.na(PDSI), !is.na(deficit), !is.na(is_flue_drought))
+
+t_pdsi <- t.test(PDSI ~ is_flue_drought, data = merged_df)
+t_def  <- t.test(deficit ~ is_flue_drought, data = merged_df)
+
+format_p <- function(p) {
+  if (p < 0.00001) {
+    "P = 0"
+  } else {
+    paste0("P = ", signif(p, 2))
+  }
+}
+
+p_pdsi <- format_p(t_pdsi$p.value)
+p_def  <- format_p(t_def$p.value)
+
+
+box_pdsi <- ggplot(merged_df, aes(x = is_flue_drought, y = PDSI)) +
+  geom_boxplot(width = 0.5, fill = "grey80", color = "black", linewidth = 0.4, outlier.shape = NA, staplewidth = 0.5) +
+  stat_summary(fun = median, geom = "segment", aes(xend = is_flue_drought, yend = PDSI), linewidth = 0.8) +
+  labs(
+    x = "fLUE drought",
+    y = "PDSI"
+  ) +
+  annotate("text", x = 1.5, y = max(merged_df$PDSI, na.rm = TRUE), label = p_pdsi, size = 4) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 10), axis.title = element_text(size = 11), plot.title = element_text(size = 11, face = "bold"))+ 
+  scale_x_discrete(labels = c("FALSE", "TRUE")) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black")
+  )
+
+
+box_pcwd <- ggplot(merged_df, aes(x = is_flue_drought, y = deficit)) +
+  geom_boxplot(width = 0.5, fill = "grey80", color = "black", linewidth = 0.4, outlier.shape = NA, staplewidth = 0.5) +
+  stat_summary(fun = median, geom = "segment", aes(xend = is_flue_drought, yend = deficit), linewidth = 0.8) +
+  labs(
+    x = "",
+    y = "PCWD [mm]"
+  ) +
+    annotate("text", x = 1.5, y = max(merged_df$deficit, na.rm = TRUE), label = p_def, size = 4) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 10), axis.title = element_text(size = 11), plot.title = element_text(size = 11, face = "bold"))+ 
+  scale_x_discrete(labels = c("FALSE", "TRUE")) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black")
+  )
+
+```
+
+
 merge: 
 ```{r}
 ## merge flux plot and pcwd plot
 library(cowplot)
 fLUE_PCWD <- fLUE_PCWD + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
-fLUE_PDSI <- fLUE_PDSI + theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 5))
+fLUE_PDSI <- fLUE_PDSI + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
+box_pdsi <- box_pdsi + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
+box_pcwd <- box_pcwd + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
 
 combined_fLUE <- plot_grid(
-  fLUE_PCWD ,fLUE_PDSI,
+  fLUE_PCWD, box_pcwd ,fLUE_PDSI, box_pdsi, 
   nrow        = 2,
-  ncol        = 1,
-  align       = "v",
+  ncol        = 2,
+  align       = "vh",
   axis        = "l",
   labels      = c(
-    "a)", 
-    "b)"
+    "a) US-Ton Site ", "b)", "c)", "d)"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.01,   # 0 = extreme left edge, a little bit of padding
@@ -498,14 +603,14 @@ combined_fLUE <- plot_grid(
     # Tweak vertical positioning if you like
   label_y = 0.98,   # just below the top
   vjust   = 1,       # align text at its top
-  rel_widths = c(1, 1),
+  rel_widths = c(2.5, 1),
   expand      = TRUE  
 )
 
 combined_fLUE
 
 ggsave(
-  filename = here::here("figures/combined_fLUE.pdf"),
+  filename = here::here("figures/combined_fLUE_US-Ton.pdf"),
   plot     = combined_fLUE,
   device   = cairo_pdf,    # better text rendering
   width    = 9,           # in inches
