@@ -439,6 +439,110 @@ ggsave(
 ```
 
 
+#### Internal variability vs forced signal in ModE-Sim
+```{r}
+library(tidyverse)
+
+# List of regions where the first ensemble member should be removed
+regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+
+# Loop through each specified region and remove the first column (m001_tidy) - bias over Australia
+for (region in regions_to_modify) {
+  corrected_full[[region]] <- corrected_full[[region]][, -1]
+}
+
+variability_summary <- map_dfr(names(corrected_full), function(region) {
+  mat <- corrected_full[[region]]  # 590 x 20
+  
+  ensemble_mean <- rowMeans(mat)           # forced signal (590,)
+  residuals     <- mat - ensemble_mean     # internal variability (590 x 20)
+  
+  tibble(
+    region        = region,
+    mean_pcwd     = mean(ensemble_mean),
+    sd_internal   = mean(apply(residuals, 1, sd)),  # avg internal spread
+    cv            = sd(rowMeans(mat)) / mean(rowMeans(mat)),
+    snr           = mean(ensemble_mean) / mean(apply(residuals, 1, sd))
+  )
+})
+
+# Define continent assignments
+continent_mapping <- list(
+  "Europe" = c("NEU", "WCE", "EEU", "MED"),
+  "North America" = c("NWN", "NEN", "WNA", "CNA", "ENA", "GIC"),
+  "Africa" = c("SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG"),
+  "Asia" = c("WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "WSB", "ESB", "RFE", "RAR"),
+  "Central America" =c("NCA", "SCA", "CAR"),
+  "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
+  "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
+)
+
+continent_colors <- c(
+  "Europe" = "#F5B0CB",
+  "North America" = "#236A3F",
+  "Africa" = "#91C7B1",
+  "Asia" = "#E5973B",
+  "Central America" = "#B33951",
+  "South America" = "#E3D081",
+  "Australia" = "#3C3980",
+  "Ocean" = "white"
+)
+
+# Convert list to a lookup data frame
+continent_df <- stack(continent_mapping) %>%
+  rename(region = values, continent = ind)
+
+# Join onto your variability_summary
+variability_summary <- variability_summary %>%
+  left_join(continent_df, by = "region")
+
+# Assuming variability_summary has columns: region, snr, continent
+variability_summary %>%
+  arrange(snr) %>%
+  mutate(region = factor(region, levels = region)) %>%   # fix order
+  ggplot(aes(x = snr, y = region, color = continent)) +
+  
+  # Reference line at SNR = 1 (noise-dominated threshold)
+  #geom_vline(xintercept = 5, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  
+  # Lollipop stem
+  geom_segment(aes(x = 0, xend = snr, y = region, yend = region),
+               linewidth = 0.5, alpha = 0.8) +
+  
+  # Lollipop head
+  geom_point(size = 3) +
+  
+  scale_color_manual(values = continent_colors) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
+  
+  labs(
+    x     = "SNR",
+    y     = NULL,
+    color = "Continent",
+  ) +
+  
+  theme_classic() +
+  theme(
+    axis.text.y      = element_text(size = 10),
+    legend.position  = c(0.8, 0.2),
+    legend.title     = element_text(face = "bold"),
+    text             = element_text(size = 12),
+    axis.title.x     = element_text(margin = margin(t = 10)),
+    plot.caption     = element_text(color = "grey50", size = 9)
+  )
+
+ggsave(
+  filename = here::here("figures/SNR_regions.pdf"),
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 7.5,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+
 #### Quantitative analysis 
 How many 2000 - 2024 ERA5Land values lie outside the EM range of ModE-Sim (i.e. are unprecedented?)
 Check how many regions lie outside of 2SD when considering whole ensemble member range? 
@@ -3307,9 +3411,9 @@ ggsave(
 
 #### Scatterplots for modern times:
 first 3: 
-1st plot: reference/overlap period *5 yr* events in mm for ERA5 and ModE-Sim: 1970-2009 (exclude problematic 60s of ERA5) 
-2nd: y-axis: ERA5_Land 1995-2024 5yr vs x-axis: ERA5 Land 1970-1999
-3rd: y-axis: ERA5-Land 1995-2024 5 yr vs x-axis: ModE-SIm BC 1970-1999
+1st plot: reference/overlap period *30 yr* events in mm for ERA5 and ModE-Sim: 1970-2009 (exclude problematic 60s of ERA5) 
+2nd: y-axis: ERA5_Land 1995-2024 30 yr vs x-axis: ERA5 Land 1970-1999
+3rd: y-axis: ERA5-Land 1995-2024 30 yr vs x-axis: ModE-SIm BC 1970-1999
 
 ```{r}
 #corrected_full <- readRDS(here::here("data/regionalResults_ModESim_bc.RData"))
@@ -3702,6 +3806,15 @@ summary_stats <- tibble(
 )
 
 summary_stats
+
+
+fit_era <- lm(era_mod ~ era_overlap, data = df_modern_era)
+summary(fit_era)
+coef(fit_era)
+
+fit_mod <- lm(era ~ mod_mean, data = df_modern_ModE)
+summary(fit_mod)
+coef(fit_mod)
 
 ```
 
