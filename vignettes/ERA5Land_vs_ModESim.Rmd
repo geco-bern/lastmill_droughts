@@ -3312,13 +3312,13 @@ first 3:
 3rd: y-axis: ERA5-Land 1995-2024 5 yr vs x-axis: ModE-SIm BC 1970-1999
 
 ```{r}
-corrected_full <- readRDS(here::here("data/regionalResults_ModESim_bc.RData"))
+#corrected_full <- readRDS(here::here("data/regionalResults_ModESim_bc.RData"))
 
 ##calculate return level of 5 year events - 30 year chunks for consistency: 
 #remove SAH due to unphysically large PCWD values - runaway PCWD 
 regional_results_ERA5Land_eva <- regional_results_ERA5Land[ names(regional_results_ERA5Land) != "SAH" ]
 
-use_rp <- 5   # return period of two years
+use_rp <- 30   # return period of two years
 
 # Modern ERA5-Land (1994-2024) for each region: 
 # Initialize a list to store results for all regions
@@ -3530,15 +3530,15 @@ scatter_overlap <- ggplot(df_overlap, aes(x = mod_mean, y = era, color = contine
   geom_smooth(method = "lm", color = "red", se = FALSE, linewidth= 0.5) +  # Trend line
   #geom_text(aes(label = region), hjust = 0.5, vjust = -0.5, size = 3, colour = "black") + # Annotate with region names
   labs(
-    x     = "ModE-Sim* 5yr PCWD [mm]",
-    y     = "ERA5-Land 5yr PCWD [mm]",
+    x     = "ModE-Sim* 30yr PCWD [mm]",
+    y     = "ERA5-Land 30yr PCWD [mm]",
     color = "Continent"
   ) +
-  #scale_x_continuous(limits = c(0, 2000, 500)) +
-  #scale_y_continuous(limits = c(0, 2000, 500)) +
+  scale_x_continuous(breaks = c(0, 500, 1000, 1500, 2000), limits = c(0, 2000)) +
+  scale_y_continuous(breaks = c(0, 500, 1000, 1500, 2000),limits = c(0, 2000)) +
   theme_classic() +
   theme(
-    legend.position    = "none",
+    legend.position =  c(0.2, 0.75),
     plot.title         = element_text(hjust = 0.5, face = "bold"),
     legend.title       = element_text(face = "bold"),
     text = element_text(size= 13),
@@ -3578,12 +3578,12 @@ scatter_era5 <- ggplot(df_modern_era, aes(x = era_overlap, y = era_mod, color = 
   geom_smooth(method = "lm", color = "red", se = FALSE, linewidth= 0.5) +  # Trend line
   #geom_text(aes(label = region), hjust = 0.5, vjust = -0.5, size = 3, colour = "black") + # Annotate with region names
   labs(
-    x     = "ERA5-Land 5yr PCWD [mm] (1970-1999)",
-    y     = "ERA5-Land 5yr PCWD [mm] (1995-2024)",
+    x     = "ERA5-Land 30yr PCWD [mm] (1970-1999)",
+    y     = "ERA5-Land 30yr PCWD [mm] (1995-2024)",
     color = "Continent"
   ) +
-  scale_x_continuous(limits = c(0, 2000, 500)) +
-  scale_y_continuous(limits = c(0, 2000, 500)) +
+  scale_x_continuous(breaks = c(0, 500, 1000, 1500, 2000), limits = c(0, 2000)) +
+  scale_y_continuous(breaks = c(0, 500, 1000, 1500, 2000),limits = c(0, 2000)) +
   theme_classic() +
   theme(
     legend.position    = "none",
@@ -3635,12 +3635,12 @@ scatter_era_mod <- ggplot(df_modern_ModE, aes(x = mod_mean, y = era, color = con
   geom_smooth(method = "lm", color = "red", se = FALSE, linewidth= 0.5) +  # Trend line
   #geom_text(aes(label = region), hjust = 0.5, vjust = -0.5, size = 3, colour = "black") + # Annotate with region names
   labs(
-    x     = "ModE-Sim* 5yr PCWD [mm] (1970-1999)",
-    y     = "ERA5-Land 5yr PCWD [mm] (1995-2024)",
+    x     = "ModE-Sim* 30yr PCWD [mm] (1970-1999)",
+    y     = "ERA5-Land 30yr PCWD [mm] (1995-2024)",
     color = "Continent"
   ) +
-  scale_x_continuous(limits = c(0, 2000, 500)) +
-  scale_y_continuous(limits = c(0, 2000, 500)) +
+  scale_x_continuous(breaks = c(0, 500, 1000, 1500, 2000), limits = c(0, 2000)) +
+  scale_y_continuous(breaks = c(0, 500, 1000, 1500, 2000),limits = c(0, 2000)) +
   theme_classic() +
   theme(
     legend.position    = "none",
@@ -3681,7 +3681,7 @@ combined_val_scatter <- plot_grid(
 print(combined_val_scatter)
 
 ggsave(
-  filename = here::here("manuscript/Scatter_validation_plots.pdf"),
+  filename = here::here("figures/Scatter_validation_plots.pdf"),
   plot     = combined_val_scatter,
   device   = cairo_pdf,    # better text rendering
   width    = 17,           # in inches
