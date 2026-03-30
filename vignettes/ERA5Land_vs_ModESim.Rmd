@@ -1366,29 +1366,29 @@ plot_region_PCWD_density <- function(region_code) {
   p_den <- ggplot() +
     geom_density(data = dat$MODE_full,
                  aes(y=PCWD, x=after_stat(density),
-                     fill="ModESim_full", color="ModESim_full"),
+                     fill="ModESim_full"),
                  alpha=0.8, size=0.6, trim = FALSE) +
     geom_density(data = dat$MODE_ref,
                  aes(y=PCWD, x=after_stat(density),
-                     fill="ModESim_ref", color="ModESim_ref"),
+                     fill="ModESim_ref"),
                  alpha=0.8, size=0.6, trim = FALSE) +
     geom_density(data = dat$ERA5_ref,
                  aes(y=PCWD, x=after_stat(density),
-                     fill="ERA5_70_99", color="ERA5_70_99"),
+                     fill="ERA5_70_99"),
                  alpha=0.6, size=0.6, trim = FALSE) +
     geom_density(data = dat$ERA5_mod,
                  aes(y=PCWD, x=after_stat(density),
-                     fill="ERA5_00_24", color="ERA5_00_24"),
+                     fill="ERA5_00_24"),
                  alpha=0.6, size=0.6, trim = FALSE) +
-    
-    geom_hline(aes(yintercept=dat$rl$MODE_full,  color="ModESim_full_lin"),
-               linetype="dashed", size=0.8) +
-    geom_hline(aes(yintercept=dat$rl$MODE_ref,   color="ModESim_ref_lin"),
-               linetype="dashed", size=0.8) +
-    geom_hline(aes(yintercept=dat$rl$ERA5_ref,   color="ERA5_70_99_lin"),
-               linetype="dashed", size=0.8) +
-    geom_hline(aes(yintercept=dat$rl$ERA5_mod,   color="ERA5_00_24_lin"),
-               linetype="dashed", size=0.8) +
+    # 
+    # geom_hline(aes(yintercept=dat$rl$MODE_full,  color="ModESim_full_lin"),
+    #            linetype="dashed", size=0.8) +
+    # geom_hline(aes(yintercept=dat$rl$MODE_ref,   color="ModESim_ref_lin"),
+    #            linetype="dashed", size=0.8) +
+    # geom_hline(aes(yintercept=dat$rl$ERA5_ref,   color="ERA5_70_99_lin"),
+    #            linetype="dashed", size=0.8) +
+    # geom_hline(aes(yintercept=dat$rl$ERA5_mod,   color="ERA5_00_24_lin"),
+    #            linetype="dashed", size=0.8) +
     
     scale_fill_manual(
       name   = "Period",
@@ -1406,22 +1406,22 @@ plot_region_PCWD_density <- function(region_code) {
         "ERA5-Land (2000-2024)"
       )
     ) +
-    scale_color_manual(
-      name   = "5-year Event",
-      breaks = c("ModESim_full_lin", "ModESim_ref_lin", "ERA5_70_99_lin", "ERA5_00_24_lin"),
-      values = c(
-        ModESim_full_lin  = "#17385E",
-        ModESim_ref_lin   = "#628567",
-        ERA5_70_99_lin    = "#E8B5CC",
-        ERA5_00_24_lin    = "#870014"
-      ),
-      labels = c(
-        "ModE-Sim* (1420-1969)",
-        "ModE-Sim* (1970-1999)",
-        "ERA5-Land (1970-1999)",
-        "ERA5-Land (2000-2024)"
-      )
-    ) +
+    # scale_color_manual(
+    #   name   = "5-year Event",
+    #   breaks = c("ModESim_full_lin", "ModESim_ref_lin", "ERA5_70_99_lin", "ERA5_00_24_lin"),
+    #   values = c(
+    #     ModESim_full_lin  = "#17385E",
+    #     ModESim_ref_lin   = "#628567",
+    #     ERA5_70_99_lin    = "#E8B5CC",
+    #     ERA5_00_24_lin    = "#870014"
+    #   ),
+    #   labels = c(
+    #     "ModE-Sim* (1420-1969)",
+    #     "ModE-Sim* (1970-1999)",
+    #     "ERA5-Land (1970-1999)",
+    #     "ERA5-Land (2000-2024)"
+    #   ))
+    # +
     labs(x="Density", y=NULL) +
     theme_classic(base_size=14) +
     theme(
@@ -1430,7 +1430,7 @@ plot_region_PCWD_density <- function(region_code) {
       legend.title   = element_text(face="bold"),
       text           = element_text(size=14),
       axis.title.y   = element_text(margin=margin(r=10)),
-      legend.position = "none"
+      legend.position = "right"
     )+
     scale_y_continuous(limits = y_limits, breaks = common_breaks)
   
@@ -1456,16 +1456,16 @@ den_MED
 # )
 # 
 # den_MED
-# ggsave(
-#   filename = here::here("figures/Annmax_PCWD_Timeseries_Density_legend.pdf"),
-#   plot     = den_MED,
-#   device   = cairo_pdf,    # better text rendering
-#   width    = 10,           # in inches
-#   height   = 13,            # in inches
-#   units    = "in",
-#   dpi      = 300,          # for raster elements (if any)
-#   bg       = "white"       # white background
-# )
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_legend.pdf"),
+  plot     = den_MED,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
 ```
 
 

@@ -35,27 +35,39 @@ A potential cumulative water deficit can be calculated using net radiation and t
 
 Read data from the example FLUNXET file contained in this repository.
 ```{r}
-df <- readRDS("/Users/phelpap/Library/CloudStorage/OneDrive-Personal/Dokumente/Bern/Master thesis/R/cwd/data/df_ch-lae.rds") |>
+df_fr <- readRDS("/Users/phelpap/Library/CloudStorage/OneDrive-Personal/Dokumente/Bern/Master thesis/R/cwd/data/df_fr-pue.rds") |>
+   # convert to from kPA to Pa (SI units are used for inputs to functions in the package)
+   mutate(PA_F = 1e3 * PA_F) |>
+   # Convert TIMESTAMP to Date format
+   mutate(TIMESTAMP = ymd(TIMESTAMP))
+
+df_au <- readRDS("/Users/phelpap/Library/CloudStorage/OneDrive-Personal/Dokumente/Bern/Master thesis/R/cwd/data/df_au-asm.rds") |>
    # convert to from kPA to Pa (SI units are used for inputs to functions in the package)
    mutate(PA_F = 1e3 * PA_F) |>
    # Convert TIMESTAMP to Date format
    mutate(TIMESTAMP = ymd(TIMESTAMP))
 
 # 
-# df <- readRDS("/Users/phelpap/Library/CloudStorage/OneDrive-Personal/Dokumente/Bern/Master thesis/R/cwd/data/df_fr-pue.rds") |> 
-#    # convert to from kPA to Pa (SI units are used for inputs to functions in the package)
-#    mutate(PA_F = 1e3 * PA_F) |>
-#    # Convert TIMESTAMP to Date format
-#    mutate(TIMESTAMP = ymd(TIMESTAMP))
+df_us <- readRDS("/Users/phelpap/Library/CloudStorage/OneDrive-Personal/Dokumente/Bern/Master thesis/R/cwd/data/df_us-me2.rds") |>
+   # convert to from kPA to Pa (SI units are used for inputs to functions in the package)
+   mutate(PA_F = 1e3 * PA_F) |>
+   # Convert TIMESTAMP to Date format
+   mutate(TIMESTAMP = ymd(TIMESTAMP))
 
-visdat::vis_miss(df)
+#visdat::vis_miss(df)
 ```
 
 Some net radiation data is missing. Impute missing values by KNN.
 ```{r}
-pp <- recipes::recipe(
+# Convert negatives to NA before imputation
+df_fr <- df_fr |>
+  dplyr::mutate(
+    NETRAD = dplyr::if_else(NETRAD < 0, NA_real_, NETRAD)
+  )
+
+pp_fr <- recipes::recipe(
   NETRAD ~ SW_IN_F_MDS + LW_IN_F_MDS + TA_F_MDS,
-  data = df |> 
+  data = df_fr |> 
     drop_na(SW_IN_F_MDS, LW_IN_F_MDS, TA_F_MDS)
 ) |>
   recipes::step_center(
@@ -71,21 +83,21 @@ pp <- recipes::recipe(
     neighbors = 5
   )
 
-pp_prep <- recipes::prep(
-  pp,
-  training = df |> 
+pp_prep_fr <- recipes::prep(
+  pp_fr,
+  training = df_fr |> 
     drop_na(SW_IN_F_MDS, LW_IN_F_MDS, TA_F_MDS)
 )
 
-df_baked <- recipes::bake(
-  pp_prep,
-  new_data = df
+df_baked_fr <- recipes::bake(
+  pp_prep_fr,
+  new_data = df_fr
 )
 
 # fill missing with gap-filled
-df <- df |>
+df_fr <- df_fr |>
   dplyr::bind_cols(
-    df_baked |>
+    df_baked_fr |>
       dplyr::select(
         NETRAD_filled = NETRAD)
   ) |>
@@ -98,6 +110,109 @@ df <- df |>
   )
 
 #visdat::vis_miss(df)
+
+## other sites: 
+# Convert negatives to NA before imputation
+df_us <- df_us |>
+  dplyr::mutate(
+    NETRAD = dplyr::if_else(NETRAD < 0, NA_real_, NETRAD)
+  )
+
+pp_us <- recipes::recipe(
+  NETRAD ~ SW_IN_F_MDS + LW_IN_F_MDS + TA_F_MDS,
+  data = df_us |> 
+    drop_na(SW_IN_F_MDS, LW_IN_F_MDS, TA_F_MDS)
+) |>
+  recipes::step_center(
+    recipes::all_numeric(),
+    -recipes::all_outcomes()
+  ) |>
+  recipes::step_scale(
+    recipes::all_numeric(),
+    -recipes::all_outcomes()
+  ) |>
+  recipes::step_impute_knn(
+    recipes::all_outcomes(),
+    neighbors = 5
+  )
+
+pp_prep_us <- recipes::prep(
+  pp_us,
+  training = df_us |> 
+    drop_na(SW_IN_F_MDS, LW_IN_F_MDS, TA_F_MDS)
+)
+
+df_baked_us <- recipes::bake(
+  pp_prep_us,
+  new_data = df_us
+)
+
+# fill missing with gap-filled
+df_us <- df_us |>
+  dplyr::bind_cols(
+    df_baked_us |>
+      dplyr::select(
+        NETRAD_filled = NETRAD)
+  ) |>
+  dplyr::mutate(
+    NETRAD = ifelse(is.na(NETRAD), NETRAD_filled, NETRAD)
+    #qc = ifelse(is.na(netrad), TRUE, FALSE)
+  ) |>
+  dplyr::select(
+    -NETRAD_filled
+  )
+
+## other sites: 
+# Convert negatives to NA before imputation
+df_au <- df_au |>
+  dplyr::mutate(
+    NETRAD = dplyr::if_else(NETRAD < 0, NA_real_, NETRAD)
+  )
+
+pp_au <- recipes::recipe(
+  NETRAD ~ SW_IN_F_MDS + LW_IN_F_MDS + TA_F_MDS,
+  data = df_au |> 
+    drop_na(SW_IN_F_MDS, LW_IN_F_MDS, TA_F_MDS)
+) |>
+  recipes::step_center(
+    recipes::all_numeric(),
+    -recipes::all_outcomes()
+  ) |>
+  recipes::step_scale(
+    recipes::all_numeric(),
+    -recipes::all_outcomes()
+  ) |>
+  recipes::step_impute_knn(
+    recipes::all_outcomes(),
+    neighbors = 5
+  )
+
+pp_prep_au <- recipes::prep(
+  pp_au,
+  training = df_au |> 
+    drop_na(SW_IN_F_MDS, LW_IN_F_MDS, TA_F_MDS)
+)
+
+df_baked_au <- recipes::bake(
+  pp_prep_au,
+  new_data = df_au
+)
+
+# fill missing with gap-filled
+df_au <- df_au |>
+  dplyr::bind_cols(
+    df_baked_au |>
+      dplyr::select(
+        NETRAD_filled = NETRAD)
+  ) |>
+  dplyr::mutate(
+    NETRAD = ifelse(is.na(NETRAD), NETRAD_filled, NETRAD)
+    #qc = ifelse(is.na(netrad), TRUE, FALSE)
+  ) |>
+  dplyr::select(
+    -NETRAD_filled
+  )
+
 ```
 
 
@@ -107,7 +222,13 @@ df <- df |>
 ```{r}
 # tested: identical results are obtained with:
 # bigleaf::potential.ET(Tair = TA_F_MDS, pressure = PA_F*1e-3, Rn = NETRAD, approach = "Priestley-Taylor")$ET_pot * 60 * 60 * 24
-df <- df |> 
+df_fr <- df_fr |> 
+  mutate(pet = 60 * 60 * 24 * pet(NETRAD, TA_F_MDS, PA_F))
+
+df_us <- df_us |> 
+  mutate(pet = 60 * 60 * 24 * pet(NETRAD, TA_F_MDS, PA_F))
+
+df_au <- df_au |> 
   mutate(pet = 60 * 60 * 24 * pet(NETRAD, TA_F_MDS, PA_F))
 ```
 
@@ -121,7 +242,13 @@ le_to_et <- function(le, tc, patm){
   1000 * 60 * 60 * 24 * le / (cwd::calc_enthalpy_vap(tc) * cwd::calc_density_h2o(tc, patm))
 }
 
-df <- df |>
+df_fr <- df_fr |>
+  mutate(et = le_to_et(LE_F_MDS, TA_F_MDS, PA_F))
+
+df_us <- df_us |>
+  mutate(et = le_to_et(LE_F_MDS, TA_F_MDS, PA_F))
+
+df_au <- df_au |>
   mutate(et = le_to_et(LE_F_MDS, TA_F_MDS, PA_F))
 ```
 
@@ -130,45 +257,17 @@ Plot mean seasonal cycle.
 # df |>
 #   mutate(TIMESTAMP = lubridate::as_date(as_datetime(TIMESTAMP_END)))
 
-df |> 
-  mutate(doy = lubridate::yday(TIMESTAMP)) |> 
-  group_by(doy) |> 
-  summarise(
-    #et = mean(et),
-    pet = mean(pet),
-    P_F = mean(P_F)  ) |> 
-  ggplot() +
-  geom_line(aes(doy, P_F, color = "P"))+
-  geom_line(aes(doy, pet, color = "PET")) + 
-  scale_color_manual(values = c("P" = "#6B74DB", "PET" = "#F59430")) +
+#over entire period: 
 
-  labs(
-    x = "Day of year",
-    y = expression(paste("Flux (mm d"^-1, ")")), 
-    color = "Flux"
-  ) +
-  theme_classic()+
-    theme(axis.text.x = element_text(size = 14),
-    legend.position = "none",
-    axis.text.y = element_text(size = 14), 
-    axis.title.x = element_text(size = 14),
-    axis.title.y = element_text(size = 14),
-    legend.title = element_text(face = "bold"),
-    legend.text = element_text(size=12)) 
-
-### select specific year to plot seasonal cycle for: 
-#flux_2013 <- 
-df |> 
-  filter(year(TIMESTAMP) == 2013) |> 
-  mutate(doy = yday(TIMESTAMP)) |> 
+df_fr |> 
   ggplot() +
   # geom_line(aes(doy, et, color = "ET")) +
-  geom_line(aes(doy, P_F, color = "P")) +
-  geom_line(aes(doy, pet, color = "PET")) +
+  geom_line(aes(TIMESTAMP, P_F, color = "P")) +
+  geom_line(aes(TIMESTAMP, pet, color = "PET")) +
   scale_color_manual(values = c("P" = "#6B74DB", "PET" = "#F59430")) +
   labs(
-    x = "Day of year",
-    y = expression(paste("Flux (mm d"^-1, ")")),
+    x = "Time",
+    y = expression(paste("Fr-Pue Flux (mm d"^-1, ")")),
     color = "Flux"
   ) +
   theme_classic() +
@@ -182,9 +281,7 @@ df |>
     legend.text = element_text(size = 12)
   )
 
-#over entire period: 
-
-df |> 
+df_us |> 
   ggplot() +
   # geom_line(aes(doy, et, color = "ET")) +
   geom_line(aes(TIMESTAMP, P_F, color = "P")) +
@@ -192,7 +289,29 @@ df |>
   scale_color_manual(values = c("P" = "#6B74DB", "PET" = "#F59430")) +
   labs(
     x = "Time",
-    y = expression(paste("Flux (mm d"^-1, ")")),
+    y = expression(paste("US-Me2 Flux (mm d"^-1, ")")),
+    color = "Flux"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    legend.position = c(0.1,0.85),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+
+df_au |> 
+  ggplot() +
+  # geom_line(aes(doy, et, color = "ET")) +
+  geom_line(aes(TIMESTAMP, P_F, color = "P")) +
+  geom_line(aes(TIMESTAMP, pet, color = "PET")) +
+  scale_color_manual(values = c("P" = "#6B74DB", "PET" = "#F59430")) +
+  labs(
+    x = "Time",
+    y = expression(paste("AU-ASM Flux (mm d"^-1, ")")),
     color = "Flux"
   ) +
   theme_classic() +
@@ -211,16 +330,40 @@ df |>
 
 Check annual totals.
 ```{r}
-adf <- df |>
+adf_fr <- df_fr |>
   mutate(day = day(TIMESTAMP)) |>
   group_by(day) |>
   summarise(pet = sum(pet), prec = sum(P_F))
 
-adf |>
+adf_fr |>
   tidyr::pivot_longer(cols = c(pet, prec), names_to = "Flux") |> 
   ggplot(aes(x = day, y = value, color = Flux)) +
   geom_line() +
-  labs(y = "Flux (mm/yr)") +
+  labs(y = "FR-Pue Flux (mm/yr)") +
+  theme_classic()
+
+adf_us <- df_us |>
+  mutate(day = day(TIMESTAMP)) |>
+  group_by(day) |>
+  summarise(pet = sum(pet), prec = sum(P_F))
+
+adf_us |>
+  tidyr::pivot_longer(cols = c(pet, prec), names_to = "Flux") |> 
+  ggplot(aes(x = day, y = value, color = Flux)) +
+  geom_line() +
+  labs(y = "US-Me2 Flux (mm/yr)") +
+  theme_classic()
+
+adf_au <- df_au |>
+  mutate(day = day(TIMESTAMP)) |>
+  group_by(day) |>
+  summarise(pet = sum(pet), prec = sum(P_F))
+
+adf_au |>
+  tidyr::pivot_longer(cols = c(pet, prec), names_to = "Flux") |> 
+  ggplot(aes(x = day, y = value, color = Flux)) +
+  geom_line() +
+  labs(y = "AU-ASM Flux (mm/yr)") +
   theme_classic()
 ```
 
@@ -232,11 +375,33 @@ A relative and an absolute option are possible for determining the threshold to 
 If no option is given, the function defaults to the relative threshold.
 Option 2: CWD calculation using an absolute threshold, here 10mm. The deficit reset is not prescribed through a given DOY here but resets once the deficit falls below the threshold. Absolute thresholds should be selected based on the regional water balance. 
 ```{r}
-df <- df |> 
+df_fr <- df_fr |> 
   mutate(pwbal = P_F - pet)
 
-out_cwd <- cwd(
-  df,
+out_cwd_fr <- cwd(
+  df_fr,
+  varname_wbal = "pwbal",
+  varname_date = "TIMESTAMP", 
+  thresh_terminate_absolute = 10,
+  thresh_drop = 0.0
+  )
+
+df_us <- df_us |> 
+  mutate(pwbal = P_F - pet)
+
+out_cwd_us <- cwd(
+  df_us,
+  varname_wbal = "pwbal",
+  varname_date = "TIMESTAMP", 
+  thresh_terminate_absolute = 10,
+  thresh_drop = 0.0
+  )
+
+df_au <- df_au |> 
+  mutate(pwbal = P_F - pet)
+
+out_cwd_au <- cwd(
+  df_au,
   varname_wbal = "pwbal",
   varname_date = "TIMESTAMP", 
   thresh_terminate_absolute = 10,
@@ -246,7 +411,13 @@ out_cwd <- cwd(
 
 Retain only events of a minimum length of 20 days.
 ```{r}
-out_cwd$inst <- out_cwd$inst |>
+out_cwd_fr$inst <- out_cwd_fr$inst |>
+  filter(len >= 20)
+
+out_cwd_us$inst <- out_cwd_us$inst |>
+  filter(len >= 20)
+
+out_cwd_au$inst <- out_cwd_au$inst |>
   filter(len >= 20)
 ```
 
@@ -261,95 +432,97 @@ get_maxcwd <- function(df){
    # return(out_cwd)
 }
 
-out_maxcwd <- get_maxcwd(out_cwd)
+out_maxcwd_fr <- get_maxcwd(out_cwd_fr)
+out_maxcwd_us <- get_maxcwd(out_cwd_us)
+out_maxcwd_au <- get_maxcwd(out_cwd_au)
 ```
 
 
 Plot the potential cumulative water deficit time series and events.
 ```{r}
-#pcwd_2013 <- 
-ggplot() +
-  geom_rect(
-    data = out_cwd$inst,
-    aes(xmin = date_start, xmax = date_end, ymin = 0, ymax = max( out_cwd$df$deficit)), 
-    fill = "grey80",
-    color = NA) +
-  geom_line(data  =  out_cwd$df, aes(TIMESTAMP, deficit), color = "#DB5A39") +
-  scale_x_date(limits = as.Date(c("2013-01-01", "2014-01-01"))) +
-  ylim(0, max(out_cwd$df$deficit)) + 
-  labs(
-    x = "Date",    y = "Potential cumulative water deficit (mm)"
-    )+
-   theme_classic()+
-    theme(axis.text.x = element_text(size = 14),
-    legend.position = "right",
-    axis.text.y = element_text(size = 14), 
-    axis.title.x = element_text(size = 14),
-    axis.title.y = element_text(size = 14),
-    legend.title = element_text(face = "bold"),
-    legend.text = element_text(size=12)) 
-
-ggplot() +
-  geom_line(data  =  out_maxcwd, aes(year, max_cwd), color = "#DB5A39") +
-  scale_x_continuous(limits = c(2001, 2014)) +
-  labs(
-    x = "Date",    y = "Annmax PCWD (mm)"
-    )+
-   theme_classic()+
-    theme(axis.text.x = element_text(size = 14),
-    legend.position = "right",
-    axis.text.y = element_text(size = 14), 
-    axis.title.x = element_text(size = 14),
-    axis.title.y = element_text(size = 14),
-    legend.title = element_text(face = "bold"),
-    legend.text = element_text(size=12)) 
+# #pcwd_2013 <- 
+# ggplot() +
+#   geom_rect(
+#     data = out_cwd$inst,
+#     aes(xmin = date_start, xmax = date_end, ymin = 0, ymax = max( out_cwd$df$deficit)), 
+#     fill = "grey80",
+#     color = NA) +
+#   geom_line(data  =  out_cwd$df, aes(TIMESTAMP, deficit), color = "#DB5A39") +
+#   scale_x_date(limits = as.Date(c("2013-01-01", "2014-01-01"))) +
+#   ylim(0, max(out_cwd$df$deficit)) + 
+#   labs(
+#     x = "Date",    y = "Potential cumulative water deficit (mm)"
+#     )+
+#    theme_classic()+
+#     theme(axis.text.x = element_text(size = 14),
+#     legend.position = "right",
+#     axis.text.y = element_text(size = 14), 
+#     axis.title.x = element_text(size = 14),
+#     axis.title.y = element_text(size = 14),
+#     legend.title = element_text(face = "bold"),
+#     legend.text = element_text(size=12)) 
+# 
+# ggplot() +
+#   geom_line(data  =  out_maxcwd, aes(year, max_cwd), color = "#DB5A39") +
+#   scale_x_continuous(limits = c(2001, 2014)) +
+#   labs(
+#     x = "Date",    y = "Annmax PCWD (mm)"
+#     )+
+#    theme_classic()+
+#     theme(axis.text.x = element_text(size = 14),
+#     legend.position = "right",
+#     axis.text.y = element_text(size = 14), 
+#     axis.title.x = element_text(size = 14),
+#     axis.title.y = element_text(size = 14),
+#     legend.title = element_text(face = "bold"),
+#     legend.text = element_text(size=12)) 
 ```
 
 ```{r}
-library(cowplot)
-## merge flux plot and pcwd plot
-flux_2013 <- flux_2013 + theme(plot.margin = margin(t = 5, r = 0, b = 0, l = 5))
-pcwd_2013 <- pcwd_2013 + theme(plot.margin = margin(t = 5, r = 20, b = 0, l = 5))
-
-combined_fluxes <- plot_grid(
-  flux_2013 ,pcwd_2013,
-  nrow        = 1,
-  ncol        = 2,
-  align       = "v",
-  axis        = "l",
-  labels      = c(
-    "a)", 
-    "b)"
-  ),
-  # Push labels all the way to the left margin of each panel
-  label_x = 0.01,   # 0 = extreme left edge, a little bit of padding
-  hjust   = 0,      # left‑justify the label text
-    # Tweak vertical positioning if you like
-  label_y = 0.98,   # just below the top
-  vjust   = 1,       # align text at its top
-  rel_widths = c(1, 1),
-  expand      = TRUE  
-)
-
-combined_fluxes
-
-# ggsave(
-#   filename = here::here("figures/US_ton_fluxes.pdf"),
-#   plot     = combined_fluxes,
-#   device   = cairo_pdf,    # better text rendering
-#   width    = 12,           # in inches
-#   height   = 5,            # in inches
-#   units    = "in",
-#   dpi      = 300,          # for raster elements (if any)
-#   bg       = "white"       # white background
+# library(cowplot)
+# ## merge flux plot and pcwd plot
+# flux_2013 <- flux_2013 + theme(plot.margin = margin(t = 5, r = 0, b = 0, l = 5))
+# pcwd_2013 <- pcwd_2013 + theme(plot.margin = margin(t = 5, r = 20, b = 0, l = 5))
+# 
+# combined_fluxes <- plot_grid(
+#   flux_2013 ,pcwd_2013,
+#   nrow        = 1,
+#   ncol        = 2,
+#   align       = "v",
+#   axis        = "l",
+#   labels      = c(
+#     "a)", 
+#     "b)"
+#   ),
+#   # Push labels all the way to the left margin of each panel
+#   label_x = 0.01,   # 0 = extreme left edge, a little bit of padding
+#   hjust   = 0,      # left‑justify the label text
+#     # Tweak vertical positioning if you like
+#   label_y = 0.98,   # just below the top
+#   vjust   = 1,       # align text at its top
+#   rel_widths = c(1, 1),
+#   expand      = TRUE  
 # )
+# 
+# combined_fluxes
+# 
+# # ggsave(
+# #   filename = here::here("figures/US_ton_fluxes.pdf"),
+# #   plot     = combined_fluxes,
+# #   device   = cairo_pdf,    # better text rendering
+# #   width    = 12,           # in inches
+# #   height   = 5,            # in inches
+# #   units    = "in",
+# #   dpi      = 300,          # for raster elements (if any)
+# #   bg       = "white"       # white background
+# # )
 ```
 
 
 For comparison: Calculate PDSI timeseries for this area
 ```{r}
 ## convert to monthly values: 
-df_monthly <- df |>
+df_monthly_fr <- df_fr |>
   mutate(month = floor_date(TIMESTAMP, "month")) |>
   group_by(month) |>
   summarise(
@@ -358,55 +531,62 @@ df_monthly <- df |>
     .groups = "drop"
   )
 
-PDSI <- pdsi(df_monthly$P, df_monthly$PET, AWC = 100, sc = TRUE)
+PDSI_fr <- pdsi(df_monthly_fr$P, df_monthly_fr$PET, AWC = 100, sc = TRUE)
 
-spinup <- length(PDSI$X) - nrow(df_monthly)
+spinup <- length(PDSI_fr$X) - nrow(df_monthly_fr)
 
-pdsi_df <- data.frame(
-  TIMESTAMP = df_monthly$month,
-  PDSI = PDSI$X[(spinup + 1):length(PDSI$X)]
+pdsi_df_fr <- data.frame(
+  TIMESTAMP = df_monthly_fr$month,
+  PDSI = PDSI_fr$X[(spinup + 1):length(PDSI_fr$X)]
+)
+
+## convert to monthly values: 
+df_monthly_us <- df_us |>
+  mutate(month = floor_date(TIMESTAMP, "month")) |>
+  group_by(month) |>
+  summarise(
+    P = sum(P_F, na.rm = TRUE),
+    PET = sum(pet, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+PDSI_us <- pdsi(df_monthly_us$P, df_monthly_us$PET, AWC = 100, sc = TRUE)
+
+spinup <- length(PDSI_us$X) - nrow(df_monthly_us)
+
+pdsi_df_us<- data.frame(
+  TIMESTAMP = df_monthly_us$month,
+  PDSI = PDSI_us$X[(spinup + 1):length(PDSI_us$X)]
+)
+
+## convert to monthly values: 
+df_monthly_au <- df_au |>
+  mutate(month = floor_date(TIMESTAMP, "month")) |>
+  group_by(month) |>
+  summarise(
+    P = sum(P_F, na.rm = TRUE),
+    PET = sum(pet, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+PDSI_au <- pdsi(df_monthly_au$P, df_monthly_au$PET, AWC = 100, sc = TRUE)
+
+spinup <- length(PDSI_au$X) - nrow(df_monthly_au)
+
+pdsi_df_au <- data.frame(
+  TIMESTAMP = df_monthly_au$month,
+  PDSI = PDSI_au$X[(spinup + 1):length(PDSI_au$X)]
 )
 ```
 
+
 ```{r}
-ggplot() +
-  geom_line(data  =  out_cwd$df, aes(TIMESTAMP, deficit), color = "#DB5A39") +
-  scale_x_date(limits = as.Date(c("2005-01-01", "2014-01-01"))) +
-  ylim(0, max(out_cwd$df$deficit)) + 
-  labs(
-    x = "Date",    y = "Potential cumulative water deficit (mm)"
-    )+
-   theme_classic()+
-    theme(axis.text.x = element_text(size = 14),
-    legend.position = "right",
-    axis.text.y = element_text(size = 14), 
-    axis.title.x = element_text(size = 14),
-    axis.title.y = element_text(size = 14),
-    legend.title = element_text(face = "bold"),
-    legend.text = element_text(size=12)) 
+## FR-PUE: read in fLUE dataset that marks soil moisture droughts: 
 
-ggplot() +
-  geom_line(data  =  pdsi_df, aes(TIMESTAMP, PDSI), color = "blue") +
-  scale_x_date(limits = as.Date(c("2005-01-01", "2014-01-01"))) +
-  labs(
-    x = "Date",    y = "scPDSI"
-    )+
-   theme_classic()+
-    theme(axis.text.x = element_text(size = 14),
-    legend.position = "right",
-    axis.text.y = element_text(size = 14), 
-    axis.title.x = element_text(size = 14),
-    axis.title.y = element_text(size = 14),
-    legend.title = element_text(face = "bold"),
-    legend.text = element_text(size=12)) 
-```
-```{r}
-## read in fLUE dataset that marks soil moisture droughts: 
+fLUE_fr <- read_csv("~/Downloads/flue_stocker18nphyt.csv") |>
+  filter(site == "FR-Pue")
 
-fLUE <- read_csv("~/Downloads/flue_stocker18nphyt.csv") |>
-  filter(site == "US-Ton")
-
-drought_periods <- fLUE |>
+drought_periods_fr <- fLUE_fr |>
   filter(is_flue_drought) |>
   arrange(date) |>
   mutate(group = cumsum(c(TRUE, diff(date) != 1))) |>
@@ -417,25 +597,26 @@ drought_periods <- fLUE |>
     .groups = "drop"
   )
 
-fLUE_PCWD <- ggplot() +
+fLUE_PCWD_fr <- 
+  ggplot() +
   geom_rect(
-    data = drought_periods,
+    data = drought_periods_fr,
     aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
     fill = "gold4",
     alpha = 0.3
   ) +
   geom_line(
-    data = out_cwd$df,
+    data = out_cwd_fr$df,
     aes(TIMESTAMP, deficit),
     color = "#DB5A39"
   ) +
     scale_x_date(
-  limits = as.Date(c("2001-01-01","2014-01-01")),
+  limits = as.Date(c("2000-01-01","2014-01-01")),
   breaks = as.Date(c(
-    "2001-01-01","2005-01-01","2009-01-01","2013-01-01"
-  ))
+    "2000-01-01", "2002-01-01","2004-01-01","2006-01-01","2008-01-01", "2010-01-01", "2012-01-01", "2014-01-01"
+  )), labels = c("2000", "2002", "2004", "2006", "2008", "2010", "2012", "2014")
 )+
-  ylim(0, max(out_cwd$df$deficit)) +
+  ylim(0, max(out_cwd_fr$df$deficit)) +
   labs(
     x = "",
     y = "PCWD (mm)"
@@ -451,50 +632,51 @@ fLUE_PCWD <- ggplot() +
     legend.text = element_text(size = 12)
   )
 
-out_maxcwd$year_date <- as.Date(paste0(out_maxcwd$year, "-01-01"))
-ggplot() +
-  geom_rect(
-    data = drought_periods,
-    aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
-    fill = "lightblue",
-    alpha = 0.3
-  ) +
-  geom_line(data  =  out_maxcwd, aes(year_date, max_cwd), color = "#DB5A39") +
-  scale_x_date(
-  limits = as.Date(c("2001-01-01","2014-01-01")),
-  breaks = as.Date(c(
-    "2001-01-01","2005-01-01","2009-01-01","2013-01-01"
-  ))
-)+
-  labs(
-    x = "Date",    y = "Annmax PCWD (mm)"
-    )+
-   theme_classic()+
-    theme(axis.text.x = element_text(size = 14),
-    legend.position = "right",
-    axis.text.y = element_text(size = 14), 
-    axis.title.x = element_text(size = 14),
-    axis.title.y = element_text(size = 14),
-    legend.title = element_text(face = "bold"),
-    legend.text = element_text(size=12)) 
+# out_maxcwd$year_date <- as.Date(paste0(out_maxcwd$year, "-01-01"))
+# ggplot() +
+#   geom_rect(
+#     data = drought_periods,
+#     aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+#     fill = "lightblue",
+#     alpha = 0.3
+#   ) +
+#   geom_line(data  =  out_maxcwd, aes(year_date, max_cwd), color = "#DB5A39") +
+#   scale_x_date(
+#   limits = as.Date(c("2001-01-01","2014-01-01")),
+#   breaks = as.Date(c(
+#     "2001-01-01","2005-01-01","2009-01-01","2013-01-01"
+#   ))
+# )+
+#   labs(
+#     x = "Date",    y = "Annmax PCWD (mm)"
+#     )+
+#    theme_classic()+
+#     theme(axis.text.x = element_text(size = 14),
+#     legend.position = "right",
+#     axis.text.y = element_text(size = 14), 
+#     axis.title.x = element_text(size = 14),
+#     axis.title.y = element_text(size = 14),
+#     legend.title = element_text(face = "bold"),
+#     legend.text = element_text(size=12)) 
 
 
-fLUE_PDSI <- ggplot() +
+fLUE_PDSI_fr <- 
+  ggplot() +
     geom_rect(
-    data = drought_periods,
+    data = drought_periods_fr,
     aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
     fill = "gold4",
     alpha = 0.3
   ) +
-  geom_line(data  =  pdsi_df, aes(TIMESTAMP, PDSI), color = "blue") +
+  geom_line(data  =  pdsi_df_fr, aes(TIMESTAMP, PDSI), color = "blue") +
   scale_x_date(
-  limits = as.Date(c("2001-01-01","2014-01-01")),
+  limits = as.Date(c("2000-01-01","2014-01-01")),
   breaks = as.Date(c(
-    "2001-01-01","2005-01-01","2009-01-01","2013-01-01"
-  ))
+    "2000-01-01", "2002-01-01","2004-01-01","2006-01-01","2008-01-01", "2010-01-01", "2012-01-01", "2014-01-01"
+  )), labels = c("2000", "2002", "2004", "2006", "2008", "2010", "2012", "2014")
 )+
   labs(
-    x = "Date",    y = "scPDSI"
+    x = "Year",    y = "scPDSI"
     )+
    theme_classic()+
     theme(axis.text.x = element_text(size = 14),
@@ -506,49 +688,232 @@ fLUE_PDSI <- ggplot() +
     legend.text = element_text(size=12)) 
 ```
 
+
+```{r}
+## US-Me2: read in fLUE dataset that marks soil moisture droughts: 
+
+fLUE_us <- read_csv("~/Downloads/flue_stocker18nphyt.csv") |>
+  filter(site == "US-Me2")
+
+drought_periods_us <- fLUE_us |>
+  filter(is_flue_drought) |>
+  arrange(date) |>
+  mutate(group = cumsum(c(TRUE, diff(date) != 1))) |>
+  group_by(group) |>
+  summarise(
+    start = min(date),
+    end   = max(date),
+    .groups = "drop"
+  )
+
+fLUE_PCWD_us <- 
+  ggplot() +
+  geom_rect(
+    data = drought_periods_us,
+    aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+    fill = "gold4",
+    alpha = 0.3
+  ) +
+  geom_line(
+    data = out_cwd_us$df,
+    aes(TIMESTAMP, deficit),
+    color = "#DB5A39"
+  ) +
+    scale_x_date(
+  limits = as.Date(c("2002-01-01","2014-01-01")),
+  breaks = as.Date(c(
+    "2002-01-01","2004-01-01","2006-01-01","2008-01-01", "2010-01-01", "2012-01-01", "2014-01-01"
+  )), labels = c("2002", "2004", "2006", "2008", "2010", "2012", "2014")
+)+
+  ylim(0, max(out_cwd_us$df$deficit)) +
+  labs(
+    x = "",
+    y = "PCWD (mm)"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(size = 14),
+    legend.position = "right",
+    axis.text.y = element_text(size = 14),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+
+
+fLUE_PDSI_us <- 
+  ggplot() +
+    geom_rect(
+    data = drought_periods_us,
+    aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+    fill = "gold4",
+    alpha = 0.3
+  ) +
+  geom_line(data  =  pdsi_df_us, aes(TIMESTAMP, PDSI), color = "blue") +
+  scale_x_date(
+  limits = as.Date(c("2002-01-01","2014-01-01")),
+  breaks = as.Date(c(
+    "2002-01-01","2004-01-01","2006-01-01","2008-01-01", "2010-01-01", "2012-01-01", "2014-01-01"
+  )), labels = c("2002", "2004", "2006", "2008", "2010", "2012", "2014")
+)+
+  labs(
+    x = "Year",    y = "scPDSI"
+    )+
+   theme_classic()+
+    theme(axis.text.x = element_text(size = 14),
+    legend.position = "right",
+    axis.text.y = element_text(size = 14), 
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12)) 
+```
+```{r}
+## AU-ASM: read in fLUE dataset that marks soil moisture droughts: 
+
+fLUE_au <- read_csv("~/Downloads/flue_stocker18nphyt.csv") |>
+  filter(site == "AU-ASM")
+
+drought_periods_au <- fLUE_au |>
+  filter(is_flue_drought) |>
+  arrange(date) |>
+  mutate(group = cumsum(c(TRUE, diff(date) != 1))) |>
+  group_by(group) |>
+  summarise(
+    start = min(date),
+    end   = max(date),
+    .groups = "drop"
+  )
+
+fLUE_PCWD_au <- 
+  ggplot() +
+  geom_rect(
+    data = drought_periods_au,
+    aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+    fill = "gold4",
+    alpha = 0.3
+  ) +
+  geom_line(
+    data = out_cwd_au$df,
+    aes(TIMESTAMP, deficit),
+    color = "#DB5A39"
+  ) +
+    scale_x_date(
+  limits = as.Date(c("2010-01-01","2014-01-01")),
+  breaks = as.Date(c(
+    "2010-01-01","2011-01-01","2012-01-01", "2013-01-01", "2014-01-01"
+  )), labels = c("2010","2011", "2012", "2013","2014")
+)+
+  ylim(0, max(out_cwd_au$df$deficit)) +
+  labs(
+    x = "",
+    y = "PCWD (mm)"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(size = 14),
+    legend.position = "right",
+    axis.text.y = element_text(size = 14),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+
+
+fLUE_PDSI_au <- 
+  ggplot() +
+    geom_rect(
+    data = drought_periods_au,
+    aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+    fill = "gold4",
+    alpha = 0.3
+  ) +
+  geom_line(data  =  pdsi_df_au, aes(TIMESTAMP, PDSI), color = "blue") +
+  scale_x_date(
+  limits = as.Date(c("2010-01-01","2014-01-01")),
+  breaks = as.Date(c(
+    "2010-01-01","2011-01-01","2012-01-01", "2013-01-01", "2014-01-01"
+  )), labels = c("2010","2011", "2012", "2013","2014")
+)+
+  labs(
+    x = "Year",    y = "scPDSI"
+    )+
+   theme_classic()+
+    theme(axis.text.x = element_text(size = 14),
+    legend.position = "right",
+    axis.text.y = element_text(size = 14), 
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12)) 
+```
+
+
 ```{r}
 ## calculate the values of PCWD and PDSI based on whether the fLUE drought is true or false: 
 # Add year-month to match PDSI
-fLUE2 <- fLUE %>%
-  mutate(yearmon = floor_date(date, "month"))
+# --- Tag each dataset before combining ---
+fLUE_all <- bind_rows(
+  fLUE_fr %>% mutate(site = "FR-Pue"),
+  fLUE_us %>% mutate(site = "US-Me2"),
+  fLUE_au %>% mutate(site = "AU-ASM")
+) %>% mutate(yearmon = floor_date(date, "month"))
 
-pdsi2 <- pdsi_df %>%
-  mutate(yearmon = floor_date(TIMESTAMP, "month"))
+pdsi_all <- bind_rows(
+  pdsi_df_fr %>% mutate(site = "FR-Pue"),
+  pdsi_df_us %>% mutate(site = "US-Me2"),
+  pdsi_df_au %>% mutate(site = "AU-ASM")
+) %>% mutate(yearmon = floor_date(TIMESTAMP, "month"))
 
-cwd2 <- out_cwd$df %>%
-  rename(date = TIMESTAMP)
+cwd_all <- bind_rows(
+  out_cwd_fr$df %>% mutate(site = "FR-Pue"),
+  out_cwd_us$df %>% mutate(site = "US-Me2"),
+  out_cwd_au$df %>% mutate(site = "AU-ASM")
+) %>% rename(date = TIMESTAMP)
 
-# Merge everything
-merged_df <- fLUE2 %>%
-  left_join(pdsi2 %>% select(yearmon, PDSI), by = "yearmon") %>%
-  left_join(cwd2 %>% select(date, deficit), by = "date")
-
-merged_df <- merged_df %>%
+# --- Merge, now joining on site + yearmon / site + date ---
+merged_all <- fLUE_all %>%
+  left_join(pdsi_all %>% select(site, yearmon, PDSI), by = c("site", "yearmon")) %>%
+  left_join(cwd_all  %>% select(site, date, deficit),  by = c("site", "date")) %>%
   filter(!is.na(PDSI), !is.na(deficit), !is.na(is_flue_drought))
 
-t_pdsi <- t.test(PDSI ~ is_flue_drought, data = merged_df)
-t_def  <- t.test(deficit ~ is_flue_drought, data = merged_df)
+# Replace t-tests with linear models
+lm_pdsi <- lm(PDSI    ~ is_flue_drought, data = merged_all)
+lm_def  <- lm(deficit ~ is_flue_drought, data = merged_all)
 
-format_p <- function(p) {
-  if (p < 0.00001) {
-    "P = 0"
-  } else {
-    paste0("P = ", signif(p, 2))
-  }
+format_r2 <- function(mod) {
+  r2 <- summary(mod)$r.squared
+  paste0("R² = ", round(r2, 3))
 }
 
-p_pdsi <- format_p(t_pdsi$p.value)
-p_def  <- format_p(t_def$p.value)
+r2_pdsi <- format_r2(lm_pdsi)
+r2_def  <- format_r2(lm_def)
+
+#R² from a binary predictor will typically be quite low — it only captures how much variance in PDSI/deficit is explained by the drought/non-drought grouping alone. If you want to also convey significance, you could combine both in the label:
+
+# format_r2 <- function(mod) {
+#   s  <- summary(mod)
+#   r2 <- s$r.squared
+#   p  <- s$coefficients[2, 4]  # p-value for is_flue_drought coefficient
+#   p_str <- if (p < 0.001) "P < 0.001" else paste0("P = ", signif(p, 2))
+#   paste0("R² = ", round(r2, 3), "\n", p_str)
+# }
+# 
+# r2_pdsi <- format_r2(lm_pdsi)
+# r2_def  <- format_r2(lm_def)
 
 
-box_pdsi <- ggplot(merged_df, aes(x = is_flue_drought, y = PDSI)) +
+box_pdsi <- 
+  ggplot(merged_all, aes(x = is_flue_drought, y = PDSI)) +
   geom_boxplot(width = 0.5, fill = "grey80", color = "black", linewidth = 0.4, outlier.shape = NA, staplewidth = 0.5) +
   stat_summary(fun = median, geom = "segment", aes(xend = is_flue_drought, yend = PDSI), linewidth = 0.8) +
   labs(
     x = "fLUE drought",
     y = "PDSI"
   ) +
-  annotate("text", x = 1.5, y = max(merged_df$PDSI, na.rm = TRUE), label = p_pdsi, size = 4) +
+  annotate("text", x = 1.5, y = max(merged_all$PDSI-0.5, na.rm = TRUE), label = r2_pdsi, size = 4)+
   theme_classic() +
   theme(axis.text = element_text(size = 10), axis.title = element_text(size = 11), plot.title = element_text(size = 11, face = "bold"))+ 
   scale_x_discrete(labels = c("FALSE", "TRUE")) +
@@ -559,14 +924,15 @@ box_pdsi <- ggplot(merged_df, aes(x = is_flue_drought, y = PDSI)) +
   )
 
 
-box_pcwd <- ggplot(merged_df, aes(x = is_flue_drought, y = deficit)) +
+box_pcwd <- 
+  ggplot(merged_all, aes(x = is_flue_drought, y = deficit)) +
   geom_boxplot(width = 0.5, fill = "grey80", color = "black", linewidth = 0.4, outlier.shape = NA, staplewidth = 0.5) +
   stat_summary(fun = median, geom = "segment", aes(xend = is_flue_drought, yend = deficit), linewidth = 0.8) +
   labs(
     x = "",
     y = "PCWD [mm]"
   ) +
-    annotate("text", x = 1.5, y = max(merged_df$deficit, na.rm = TRUE), label = p_def, size = 4) +
+  annotate("text", x = 1.5, y = max(merged_all$deficit - 80, na.rm = TRUE), label = r2_def, size = 4)+
   theme_classic() +
   theme(axis.text = element_text(size = 10), axis.title = element_text(size = 11), plot.title = element_text(size = 11, face = "bold"))+ 
   scale_x_discrete(labels = c("FALSE", "TRUE")) +
@@ -583,19 +949,23 @@ merge:
 ```{r}
 ## merge flux plot and pcwd plot
 library(cowplot)
-fLUE_PCWD <- fLUE_PCWD + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
-fLUE_PDSI <- fLUE_PDSI + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
+fLUE_PCWD_fr <- fLUE_PCWD_fr + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
+fLUE_PDSI_fr <- fLUE_PDSI_fr + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
+fLUE_PCWD_us <- fLUE_PCWD_us + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
+fLUE_PDSI_us <- fLUE_PDSI_us + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
+fLUE_PCWD_au <- fLUE_PCWD_au + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
+fLUE_PDSI_au <- fLUE_PDSI_au + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
 box_pdsi <- box_pdsi + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
 box_pcwd <- box_pcwd + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 5))
 
 combined_fLUE <- plot_grid(
-  fLUE_PCWD, box_pcwd ,fLUE_PDSI, box_pdsi, 
-  nrow        = 2,
+  fLUE_PCWD_fr, fLUE_PCWD_us ,fLUE_PDSI_fr, fLUE_PDSI_us,fLUE_PCWD_au, box_pcwd, fLUE_PDSI_au, box_pdsi,
+  nrow        = 4,
   ncol        = 2,
   align       = "vh",
   axis        = "l",
   labels      = c(
-    "a) US-Ton Site ", "b)", "c)", "d)"
+    "a) FR-Pue ", "e) US-Me2", "b)", "f)", "c) AU-ASM", "g) pooled PCWD", "d)", "h) pooled PDSI"
   ),
   # Push labels all the way to the left margin of each panel
   label_x = 0.01,   # 0 = extreme left edge, a little bit of padding
@@ -603,17 +973,17 @@ combined_fLUE <- plot_grid(
     # Tweak vertical positioning if you like
   label_y = 0.98,   # just below the top
   vjust   = 1,       # align text at its top
-  rel_widths = c(2.5, 1),
+  rel_widths = c(1, 1),
   expand      = TRUE  
 )
 
 combined_fLUE
 
 ggsave(
-  filename = here::here("figures/combined_fLUE_US-Ton.pdf"),
+  filename = here::here("figures/combined_fLUE_sites.pdf"),
   plot     = combined_fLUE,
   device   = cairo_pdf,    # better text rendering
-  width    = 9,           # in inches
+  width    = 11,           # in inches
   height   = 7,            # in inches
   units    = "in",
   dpi      = 300,          # for raster elements (if any)
