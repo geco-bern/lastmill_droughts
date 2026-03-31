@@ -3227,7 +3227,7 @@ ggsave(
 
 ##### DO THIS ANALYSIS FOR THE SAME PERIODS AS FOR THE INTENSITY 
 
-How many regions experience a doubling in return period (below every 2.5) in the period 2000 - 2024? 
+How many regions experience a doubling in return period (below every 15) in the period 2000 - 2024? 
 
 ```{r}
 ## remove SAH from quantitative results
@@ -4032,7 +4032,7 @@ map_recent <- ggplot() +
   theme_void() +
   theme(
     plot.margin     = margin(0,0,0,0),
-    legend.position = c(0.05, 0.05),   # inside top-left
+    legend.position = c(0.0, 0.0),   # inside top-left
     legend.justification = c("left", "bottom"),
     legend.background = element_blank(),
     legend.title = element_text(face = "bold")
@@ -4520,7 +4520,7 @@ map_modern_25 <- ggplot() +
   theme_void() +
   theme(
     plot.margin     = margin(0,0,0,0),
-    legend.position = c(0.05, 0.05),   # inside top-left
+    legend.position = c(0.0, 0.0),   # inside top-left
     legend.justification = c("left", "bottom"),
     legend.background = element_blank(),
     legend.title = element_text(face = "bold")
