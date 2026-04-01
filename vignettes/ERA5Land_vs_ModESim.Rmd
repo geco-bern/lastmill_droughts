@@ -4443,7 +4443,7 @@ tmp <- df_record25_era5 |>
   mutate(
     is_greater = pcwd_max1 > pcwd_max0,
     color_cat = case_when(
-    is_greater ~ "exceeding",
+    is_greater ~ "unprecedented",
       TRUE ~ "within"
     )
   )
@@ -4461,14 +4461,14 @@ gg5 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
-                                 "exceeding" = "#6099FA")) +
+                                                 "unprecedented"     = "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
     labs(
     x = "ERA5 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
     title = ""
   )+  theme(
     legend.position = c(0.05, 0.95),   # inside top-left
@@ -4482,7 +4482,7 @@ gg5
 ```{r}
 
 colors_map <- c("within" = "#301934", 
-                "exceeding" = "#6099FA")
+       "unprecedented"     = "#91C499")
 
 # Join categories onto the spatial data
 shown_sf <- refregions_sf %>% 
@@ -4557,7 +4557,7 @@ tmp <- df_record25_era5_modesim_recent |>
   mutate(
     is_greater = pcwd_max1 > pcwd_max0_right,
     color_cat = case_when(
-      is_greater ~ "exceeding",
+      is_greater ~ "unprecedented",
       TRUE ~ "within"
     )
   )
@@ -4572,14 +4572,14 @@ gg6 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
-                                 "exceeding" = "#6099FA")) +
+                                                 "unprecedented"     = "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
     labs(
     x = "ModE-Sim 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
     title = ""
   )+  theme(
     legend.position = c(0.05, 0.95),   # inside top-left
@@ -4667,7 +4667,7 @@ tmp <- df_record25_era5_modesim_historical |>
   mutate(
     is_greater = pcwd_max1 > pcwd_max0_right,
     color_cat = case_when(
-      is_greater ~ "exceeding",
+      is_greater ~ "unprecedented",
       TRUE ~ "within"
     )
   )
@@ -4682,14 +4682,14 @@ gg7 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
-                                 "exceeding" = "#6099FA")) +
+                                                "unprecedented"     = "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
     labs(
     x = "ModE-Sim 1850-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
     title = ""
   )+  theme(
     legend.position = c(0.05, 0.95),   # inside top-left
@@ -4774,7 +4774,7 @@ tmp <- df_record25_era5_modesim_multicent |>
   mutate(
     is_greater = pcwd_max1 > pcwd_max0_right,
     color_cat = case_when(
-      is_greater ~ "exceeding",
+      is_greater ~ "unprecedented",
       TRUE ~ "within"
     )
   )
@@ -4789,7 +4789,7 @@ gg8 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
-                                 "exceeding" = "#6099FA")) +
+                                                "unprecedented"     = "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
@@ -4943,7 +4943,7 @@ df_modesim_30x_pooled_recent <- df_modesim_30x_pooled |>
 tmp <- df_era5_30x |> 
   mutate(is_greater = pcwd_x30_ref0 < pcwd_x30_ref1,
   color_cat = case_when(
-      is_greater ~ "exceeding",
+      is_greater ~ "unprecedented",
       TRUE ~ "within"
     ))
 
@@ -4958,14 +4958,14 @@ gg9 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
     scale_color_manual(name = "Event category", values = c("within" = "#301934",
-                                "exceeding" = "#6099FA")) +
+                                                "unprecedented"     = "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
   labs(
     x = "ERA5 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
     title = ""
   ) + theme(
     legend.position = c(0.05, 0.95),   # inside top-left
@@ -4979,7 +4979,7 @@ gg9
 ```{r}
 
 colors_map <- c("within" = "#301934", 
-                "exceeding" = "#6099FA")
+                                "unprecedented"     = "#91C499")
 
 # Join categories onto the spatial data
 shown_sf <- refregions_sf %>% 
@@ -5053,7 +5053,7 @@ df_30x_sliding_recent <- df_modesim_30x_sliding |>
 tmp <- df_30x_sliding_recent |> 
   mutate(is_greater = pcwd_x30_ref1 > pcwd_30x_ref0_max,
   color_cat = case_when(
-      is_greater ~ "exceeding",
+      is_greater ~ "unprecedented",
       TRUE ~ "within"
     ))
 
@@ -5069,14 +5069,14 @@ gg10 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
     scale_color_manual(name = "Event category", values = c("within" = "#301934",
-                                "exceeding" = "#6099FA")) +
+                                                "unprecedented"     = "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
   labs(
     x = "ModE-Sim 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
     title = "   "
   )
 
@@ -5086,7 +5086,7 @@ gg10
 ```{r}
 
 colors_map <- c("within" = "#301934", 
-                "exceeding" = "#6099FA")
+                                "unprecedented"     = "#91C499")
 
 # Join categories onto the spatial data
 shown_sf <- refregions_sf %>% 
@@ -5160,7 +5160,7 @@ df_30x_sliding_historical <- df_modesim_30x_sliding |>
 tmp <- df_30x_sliding_historical |> 
   mutate(is_greater = pcwd_x30_ref1 > pcwd_30x_ref0_max,
   color_cat = case_when(
-      is_greater ~ "exceeding",
+      is_greater ~ "unprecedented",
       TRUE ~ "within"
     ))
 
@@ -5176,14 +5176,14 @@ gg11 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
     scale_color_manual(name = "Event category", values = c("within" = "#301934",
-                                "exceeding" = "#6099FA")) +
+                                                "unprecedented"     = "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
   labs(
     x = "ModE-Sim 1850-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
     title = "   "
   )
 
@@ -5193,7 +5193,7 @@ gg11
 ```{r}
 
 colors_map <- c("within" = "#301934", 
-                "exceeding" = "#6099FA")
+                                "unprecedented"     = "#91C499")
 
 # Join categories onto the spatial data
 shown_sf <- refregions_sf %>% 
@@ -5266,7 +5266,7 @@ df_30x_sliding_multicent <- df_modesim_30x_sliding |>
 tmp <- df_30x_sliding_multicent |> 
   mutate(is_greater = pcwd_x30_ref1 > pcwd_30x_ref0_max,
   color_cat = case_when(
-      is_greater ~ "exceeding",
+      is_greater ~ "unprecedented",
       TRUE ~ "within"
     ))
 
@@ -5282,14 +5282,14 @@ gg12 <- tmp |>
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
     scale_color_manual(name = "Event category", values = c("within" = "#301934",
-                                "exceeding" = "#6099FA")) +
+                                                "unprecedented"     = "#91C499")) +
   theme_classic() +
   scale_x_log10() +
   scale_y_log10() +
   labs(
     x = "ModE-Sim 1420-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("exceeding")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
     title = "   "
   )
 
@@ -5298,7 +5298,7 @@ gg12
 ```{r}
 
 colors_map <- c("within" = "#301934", 
-                "exceeding" = "#6099FA")
+                                "unprecedented"     = "#91C499")
 
 # Join categories onto the spatial data
 shown_sf <- refregions_sf %>% 
