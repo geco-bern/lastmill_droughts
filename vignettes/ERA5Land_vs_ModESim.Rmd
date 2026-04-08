@@ -3943,7 +3943,7 @@ n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
 # plot
 gg1 <- tmp |>
   ggplot(aes(pcwd_max0, pcwd_max1, color = color_cat)) +
-  geom_point(size = 0.9, show.legend = TRUE) +
+  geom_point(size = 1, show.legend = TRUE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
@@ -3955,14 +3955,16 @@ gg1 <- tmp |>
   labs(
     x = "ERA5 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater) ~ ", " ~ 
-                      italic(N[plain("record-shattering")]) == .(n_shattering)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("rec.-shat.")]) == .(n_shattering)),
     title = ""
   )+  theme(
-    legend.position = c(0.05, 0.95),   # inside top-left
+    legend.position = c(0.02, 0.99),   # inside top-left
     legend.justification = c("left", "top"),
     legend.background = element_blank(),
-    legend.title = element_text(face = "bold")
+    text = element_text(size = 14),
+    legend.title = element_text(face = "bold", size=12),
+    legend.text = element_text(size=12)
   )
 
 gg1
@@ -4091,8 +4093,8 @@ n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
 
 gg2 <- tmp |> 
   ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
-  geom_segment(show.legend = FALSE, linewidth = 0.75) +
-  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(values = c("within" = "#301934",
@@ -4104,10 +4106,11 @@ gg2 <- tmp |>
   labs(
     x = "ModE-Sim 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater) ~ ", " ~ 
-                      italic(N[plain("record-shattering")]) == .(n_shattering)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("rec.-shat.")]) == .(n_shattering)),
     title = "   "
-  )
+  )+
+  theme(text = element_text(size = 14))
 
 gg2
 ```
@@ -4212,8 +4215,8 @@ n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
 
 gg3 <- tmp |> 
   ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
-  geom_segment(show.legend = FALSE, linewidth = 0.75) +
-  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(values = c("within" = "#301934",
@@ -4225,10 +4228,11 @@ gg3 <- tmp |>
   labs(
     x = "ModE-Sim 1850-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater) ~ ", " ~ 
-                      italic(N[plain("record-shattering")]) == .(n_shattering)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("rec.-shat.")]) == .(n_shattering)),
     title = "   "
-  )
+  )+
+  theme(text = element_text(size = 14))
 
 gg3
 ```
@@ -4327,8 +4331,8 @@ n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
 
 gg4 <- tmp |> 
   ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
-  geom_segment(show.legend = FALSE, linewidth = 0.75) +
-  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event type", values = c("within" = "#301934",
@@ -4340,10 +4344,11 @@ gg4 <- tmp |>
   labs(
     x = "ModE-Sim 1420-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater) ~ ", " ~ 
-                      italic(N[plain("record-shattering")]) == .(n_shattering)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("rec.-shat.")]) == .(n_shattering)),
     title = "   "
-  )
+  )+
+  theme(text = element_text(size = 14))
 
 gg4
 #ggsave(here("figures/category_scatter_legend.pdf"), plot = gg4, width = 6, height = 4)
@@ -4457,7 +4462,7 @@ Plot.
 
 gg5 <- tmp |> 
   ggplot(aes(pcwd_max0, pcwd_max1, color = color_cat)) +
-  geom_point(size = 0.9, show.legend = TRUE) +
+  geom_point(size = 1, show.legend = TRUE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
@@ -4468,17 +4473,21 @@ gg5 <- tmp |>
     labs(
     x = "ERA5 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
     title = ""
   )+  theme(
-    legend.position = c(0.05, 0.95),   # inside top-left
+    legend.position = c(0.02, 0.99),   # inside top-left
     legend.justification = c("left", "top"),
     legend.background = element_blank(),
-    legend.title = element_text(face = "bold")
+    text = element_text(size = 14),
+    legend.title = element_text(face = "bold", size=12),
+    legend.text = element_text(size=12)
   )
 
 gg5
 ```
+
+
 ```{r}
 
 colors_map <- c("within" = "#301934", 
@@ -4567,8 +4576,8 @@ n_greater <- sum(tmp$is_greater, na.rm = TRUE)
 
 gg6 <- tmp |> 
   ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
-  geom_segment(show.legend = FALSE, linewidth = 0.75) +
-  geom_point(size = 0.75, show.legend = FALSE) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(size = 1, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
@@ -4579,14 +4588,15 @@ gg6 <- tmp |>
     labs(
     x = "ModE-Sim 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
     title = ""
   )+  theme(
     legend.position = c(0.05, 0.95),   # inside top-left
     legend.justification = c("left", "top"),
     legend.background = element_blank(),
     legend.title = element_text(face = "bold")
-  )
+  )+
+  theme(text = element_text(size = 14))
 
 gg6
 ```
@@ -4677,8 +4687,8 @@ n_greater <- sum(tmp$is_greater, na.rm = TRUE)
 
 gg7 <- tmp |> 
   ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
-  geom_segment(show.legend = FALSE, linewidth = 0.75) +
-  geom_point(size = 0.75, show.legend = FALSE) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(size = 1, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
@@ -4689,17 +4699,20 @@ gg7 <- tmp |>
     labs(
     x = "ModE-Sim 1850-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
     title = ""
   )+  theme(
     legend.position = c(0.05, 0.95),   # inside top-left
     legend.justification = c("left", "top"),
     legend.background = element_blank(),
     legend.title = element_text(face = "bold")
-  )
+  )+
+  theme(text = element_text(size = 14))
 
 gg7
 ```
+
+
 ```{r}
 # Join categories onto the spatial data
 shown_sf <- refregions_sf %>% 
@@ -4784,8 +4797,8 @@ n_greater <- sum(tmp$is_greater, na.rm = TRUE)
 
 gg8 <- tmp |> 
   ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
-  geom_segment(show.legend = FALSE, linewidth = 0.75) +
-  geom_point(size = 0.75, show.legend = FALSE) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(size = 1, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
   scale_color_manual(name = "Event category", values = c("within" = "#301934",
@@ -4796,17 +4809,20 @@ gg8 <- tmp |>
     labs(
     x = "ModE-Sim 1420-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
     title = ""
   )+  theme(
     legend.position = c(0.05, 0.95),   # inside top-left
     legend.justification = c("left", "top"),
     legend.background = element_blank(),
     legend.title = element_text(face = "bold")
-  )
+  )+
+  theme(text = element_text(size = 14))
 
 gg8
 ```
+
+
 ```{r}
 # Join categories onto the spatial data
 shown_sf <- refregions_sf %>% 
@@ -4954,7 +4970,7 @@ n_greater <- tmp |>
 
 gg9 <- tmp |> 
   ggplot(aes(pcwd_x30_ref0, pcwd_x30_ref1, color = color_cat)) +
-  geom_point(size = 0.9, show.legend = FALSE) +
+  geom_point(size = 1, show.legend = FALSE) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
     scale_color_manual(name = "Event category", values = c("within" = "#301934",
@@ -4965,13 +4981,14 @@ gg9 <- tmp |>
   labs(
     x = "ERA5 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
     title = ""
   ) + theme(
     legend.position = c(0.05, 0.95),   # inside top-left
     legend.justification = c("left", "top"),
     legend.background = element_blank(),
-    legend.title = element_text(face = "bold"))
+    legend.title = element_text(face = "bold"),
+    text = element_text(size = 14))
 
 gg9
 ```
@@ -5064,8 +5081,8 @@ n_greater <- tmp |>
 
 gg10 <- tmp |> 
   ggplot(aes(x = pcwd_30x_ref0_max, xend = pcwd_30x_ref0_min, y = pcwd_x30_ref1, color = color_cat)) +
-  geom_segment(show.legend = FALSE, linewidth = 0.75) +
-  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
     scale_color_manual(name = "Event category", values = c("within" = "#301934",
@@ -5076,9 +5093,10 @@ gg10 <- tmp |>
   labs(
     x = "ModE-Sim 1975-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
     title = "   "
-  )
+  )+
+  theme(text = element_text(size = 14))
 
 gg10
 ```
@@ -5171,8 +5189,8 @@ n_greater <- tmp |>
 
 gg11 <- tmp |> 
   ggplot(aes(x = pcwd_30x_ref0_max, xend = pcwd_30x_ref0_min, y = pcwd_x30_ref1, color = color_cat)) +
-  geom_segment(show.legend = FALSE, linewidth = 0.75) +
-  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
     scale_color_manual(name = "Event category", values = c("within" = "#301934",
@@ -5183,9 +5201,10 @@ gg11 <- tmp |>
   labs(
     x = "ModE-Sim 1850-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
     title = "   "
-  )
+  )+
+  theme(text = element_text(size = 14))
 
 gg11
 ```
@@ -5277,8 +5296,8 @@ n_greater <- tmp |>
 
 gg12 <- tmp |> 
   ggplot(aes(x = pcwd_30x_ref0_max, xend = pcwd_30x_ref0_min, y = pcwd_x30_ref1, color = color_cat)) +
-  geom_segment(show.legend = FALSE, linewidth = 0.75) +
-  geom_point(show.legend = FALSE, size = 0.75) +
+  geom_segment(show.legend = FALSE, linewidth =1) +
+  geom_point(show.legend = FALSE, size = 1) +
   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
   coord_equal() +
     scale_color_manual(name = "Event category", values = c("within" = "#301934",
@@ -5289,12 +5308,15 @@ gg12 <- tmp |>
   labs(
     x = "ModE-Sim 1420-1999 (mm)",
     y = "ERA5 2000-2024 (mm)",
-    subtitle = bquote(italic(N[plain("unprecedented")]) == .(n_greater)),
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
     title = "   "
-  )
+  )+
+  theme(text = element_text(size = 14))
 
 gg12
 ```
+
+
 ```{r}
 
 colors_map <- c("within" = "#301934", 
