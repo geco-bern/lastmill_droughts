@@ -3802,7 +3802,8 @@ ggsave(
 # Calculate the correlation and mean bias between ERA5-Land and ModE-Sim* 5-year events during overlap 
 summary_stats <- tibble(
   correlation = cor(df_overlap$era, df_overlap$mod_mean, use = "complete.obs"),
-  mean_bias   = mean(df_overlap$mod_mean - df_overlap$era, na.rm = TRUE)
+  mean_bias   = mean(df_overlap$mod_mean - df_overlap$era, na.rm = TRUE),
+  rel_bias = mean_bias / mean(df_overlap$mod_mean)
 )
 
 summary_stats
