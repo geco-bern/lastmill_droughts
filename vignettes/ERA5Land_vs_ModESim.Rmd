@@ -1,0 +1,5751 @@
+---
+title: "PCWD values from ModE-Sim vs ERA5Land output"
+author: "Patricia Helpap"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, echo=FALSE}
+library(here)
+library(readr)
+library(dplyr)
+library(slider)
+library(lubridate)
+library(patchwork)
+library(ggplot2)
+library(ncdf4)
+library(reshape2)
+library(ggpubr)
+library(ggtext)
+library(maps)
+library(terra)
+library(rnaturalearth)
+library(sf)
+library(sp)
+library(RColorBrewer)
+library(tidyverse)
+library(abind)
+library(patchwork)
+library(gridExtra)
+library(ggsci)
+library(purrr)
+library(qmap)
+library(cowplot)
+library(extRemes)
+library(ggpattern)
+
+```
+
+## Comparison of ModE-Sim and ERA5-Land PCWD data and bias correction - Regional comparisons 
+
+## Compute regional dataset for ERA5Land data: 
+
+```{r}
+### read in IPCC Region information:
+#Load reference regions and coastlines:
+load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
+
+
+#simplify this object by converting it to a SpatialPolygons class object (i.e., only the polygons are retained and their attributes discarded):
+refregions <- as(IPCC_WGI_reference_regions_v4, "SpatialPolygons")
+
+# List of regions to loop over --- excludes ocean basins
+regions <- c("GIC", "NWN", "NEN", "WNA", "CNA", "ENA", "NCA", "SCA", "CAR", "NWS",
+             "NSA", "NES", "SAM", "SWS", "SES", "SSA", "NEU", "WCE", "EEU", "MED",
+             "SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG", "RAR", "WSB",
+             "ESB", "RFE", "WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "NAU",
+             "CAU", "EAU", "SAU", "NZ")
+
+# Define continent assignments
+continent_mapping <- list(
+  "Europe" = c("NEU", "WCE", "EEU", "MED"),
+  "North America" = c("NWN", "NEN", "WNA", "CNA", "ENA", "GIC"),
+  "Africa" = c("SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG"),
+  "Asia" = c("WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "WSB", "ESB", "RFE", "RAR"),
+  "Central America" =c("NCA", "SCA", "CAR"),
+  "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
+  "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
+)
+
+```
+
+### Load modern ERA5-Land reanalysis data
+
+```{r}
+
+regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land_cons.RData")) #1950 - 2024
+### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
+regional_results_ERA5Land <- lapply(regional_results_ERA5Land, function(x) x[21:75])
+
+# save cropped ERA5Land data: 
+saveRDS(regional_results_ERA5Land, file = here::here("data/regional_results_ERA5Land_cons.rds"))
+
+```
+
+
+### Bias correct regional ModE-Sim data
+
+#### Apply Quantile Mapping to already regional average data in order to fit distribution better
+- fit quantile mapping for an overlap period
+- then apply to the rest of the dataset
+
+Apply bias correction for chosen overlap period (21:50) - excludes 60s with potential precipitation problem in ModE-Sim and somewhat allows for stationary climate
+
+```{r}
+#---------- Read in raw ModE-Sim regional aggregate data and merge epochs
+### read in ModE-Sim regional results
+regional_results_1420 <- readRDS(here("data/regionalResults_1420_1.RData"))
+regional_results_1850 <- readRDS(here("data/regionalResults_1850_1.RData"))
+merged_results <- Map(rbind, regional_results_1420, regional_results_1850) # Stitch matrices together row-wise for each region
+
+### Remove m001_tidy for areas CAU, EAU, NAU, NZ, SAU, RFE, EAS, SEA
+# List of regions where the first ensemble member should be removed
+regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+
+# Loop through each specified region and remove the first column (m001_tidy) - bias over Australia
+for (region in regions_to_modify) {
+  merged_results[[region]] <- merged_results[[region]][, -1]
+}
+
+#install.packages("qmap") # uncomment if you haven't installed it
+library(qmap)
+library(Metrics)
+
+corrected_full <- list()
+
+for (region in names(regional_results_ERA5Land)) {
+
+  obs <- regional_results_ERA5Land[[region]][1:30]  # [1:60] - 30 years (1970-1999)
+  sim_overlap <- merged_results[[region]][551:580, ]  # 1970-1999 period for training as 60s have precip problems
+  sim_full <- merged_results[[region]]  # 160 years
+
+  corrected_matrix <- matrix(NA, nrow = nrow(sim_full), ncol = ncol(sim_full))
+  colnames(corrected_matrix) <- colnames(sim_full)
+
+  for (i in 1:ncol(sim_full)) {  #loop through ensemble members
+    mod_train <- sim_overlap[, i]  # 60-year overlap
+    mod_full <- sim_full[, i]      # 160-year full run
+
+    # # Fit QM model on 60-year overlap on a parametric transfer function
+    qm_model <- fitQmapPTF(obs = obs, mod = mod_train, wet.day = FALSE, qstep = 0.001)
+    #
+    # # Apply to full 160-year series
+    corrected_matrix[, i] <- doQmapPTF(mod_full, qm_model)
+  }
+
+  corrected_full[[region]] <- corrected_matrix
+}
+
+###save bias corrected ModE-Sim data:
+saveRDS(corrected_full, file = here::here("data/regionalResults_ModESim_bc.RData"))
+# save cropped ERA5Land data: 
+saveRDS(corrected_full, file = here::here("data/regional_results_ModESim_bc.rds"))
+
+corrected_full <- readRDS(here("data/regionalResults_ModESim_bc.RData"))
+
+
+```
+
+```{r}
+## Bias correction cross-validation: 
+library(qmap)
+library(Metrics)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+set.seed(123)
+n_splits <- 10  # number of CV splits
+
+# Initialize a list to store CV results in long format
+cv_long <- list()
+
+for (region in names(regional_results_ERA5Land)) {
+  
+  obs <- regional_results_ERA5Land[[region]][1:30]
+  sim_overlap <- merged_results[[region]][551:580, ]
+  
+  # Store split results for this region
+  region_cv <- data.frame()
+  
+  for (s in 1:n_splits) {
+    # Randomly split 30 years into train (70%) and validation (30%)
+    train_idx <- sample(1:30, size = 21)
+    val_idx <- setdiff(1:30, train_idx)
+    
+    obs_train <- obs[train_idx]
+    obs_val <- obs[val_idx]
+    
+    sim_train <- sim_overlap[train_idx, ]
+    sim_val <- sim_overlap[val_idx, ]
+    
+    # Initialize matrices to store RMSE
+    rmse_raw <- numeric(ncol(sim_overlap))
+    rmse_corrected <- numeric(ncol(sim_overlap))
+    
+    for (i in 1:ncol(sim_overlap)) {
+      # Fit QM on training
+      qm_model <- fitQmapPTF(obs = obs_train, mod = sim_train[, i], wet.day = FALSE, qstep = 0.001)
+      # Corrected validation
+      sim_val_corrected <- doQmapPTF(sim_val[, i], qm_model)
+      
+      # Compute RMSE for raw and corrected
+      rmse_raw[i] <- rmse(obs_val, sim_val[, i])
+      rmse_corrected[i] <- rmse(obs_val, sim_val_corrected)
+    }
+    
+    # Combine into long format for this split
+    split_df <- data.frame(
+      region = region,
+      split = s,
+      ensemble = 1:ncol(sim_overlap),
+      raw = rmse_raw,
+      corrected = rmse_corrected
+    )
+    
+    # Pivot longer to have a 'type' column
+    split_df_long <- pivot_longer(split_df, cols = c("raw", "corrected"),
+                                  names_to = "type", values_to = "rmse")
+    
+    # Append to region CV
+    region_cv <- bind_rows(region_cv, split_df_long)
+  }
+  
+  # Store for all regions
+  cv_long[[region]] <- region_cv
+}
+
+# Combine all regions into a single data frame
+cv_long_df <- bind_rows(cv_long)
+
+regions <- unique(cv_long_df$region)
+
+shade_data <- data.frame(
+  region = regions,
+  xmin = seq_along(regions) - 0.5,
+  xmax = seq_along(regions) + 0.5,
+  shade = seq_along(regions) %% 2
+)
+
+shade_data <- subset(shade_data, shade == 1)
+
+# Plot RMSE comparison raw vs corrected
+RMSE_bc_boxplot <- ggplot(cv_long_df, aes(x = region, y = rmse, fill = type)) +
+  # Background alternating bands
+  geom_rect(
+    data = shade_data,
+    inherit.aes = FALSE,
+    aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+    fill = "grey90"
+  ) +
+  geom_boxplot(position = position_dodge(width = 0.1), linewidth=0.2, outlier.alpha = 0.4) +
+  scale_fill_manual(
+    values = c("raw" = "#FFBD00", "corrected" = "#255C99"),
+    labels = c("ModE-Sim (raw)", "ModESim* (bc)")  # Or customize as you like
+  ) +
+  labs(y = "RMSE", x = "Region", fill = "Simulation type",
+       title = "") +
+  theme_classic()  +
+theme(axis.text.x = element_text(angle = 45, hjust = 1, color="black", size=11),
+    axis.text.y = element_text(size = 12, color="black"),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    legend.position = "none") + # anchor point of the legend box) +  # Rotate x-axis labels
+  labs(title = "",
+       y = "RMSE",
+       x = "",
+       fill = "Data Set")
+```
+
+Validation plots: 
+- violin plots for each region, showing the values from ModESim with ERA5 overlain to see where the match works well 
+- scatterplot where data should lie on 1:1 line if it represents well 
+
+
+```{r}
+# Convert ModESim data to long format
+ModESim_long <- bind_rows(lapply(names(merged_results), function(region) {
+  mat <- merged_results[[region]]
+  n_members <- ncol(mat)       # number of ensemble members (could be 19 or 20)
+  n_years <- length(years)                # 550
+  sub <- mat[seq_len(n_years), , drop = FALSE]  # take first 550 rows
+  data.frame(
+    Year = rep(1970:2009, times = n_members),  # Repeat years for each ensemble member
+    Value = as.vector(merged_results[[region]][551:590,]),  # Flatten matrix
+    Region = region,
+    Source = "ModESim"
+  )
+}))
+
+# Convert ModESim data to long format
+ModESim_long_bc <- bind_rows(lapply(names(corrected_full), function(region) {
+  mat <- corrected_full[[region]]
+  n_members <- ncol(mat)       # number of ensemble members (could be 19 or 20)
+  n_years <- length(years)                # 550
+  sub <- mat[seq_len(n_years), , drop = FALSE]  # take first 550 rows
+  
+  data.frame(
+    Year   = rep(1970:2009, times = n_members), # repeat years accordingly
+    Value   = as.vector(mat[551:590, ]),           # flatten matrix
+    Region = region,
+    Source = "ModESim*"
+  )
+}))
+
+# Convert ERA5Land data to long format (assuming it's stored in a similar list format)
+ERA5Land_long <- bind_rows(lapply(names(regional_results_ERA5Land), function(region) {
+  data.frame(
+    Year = 1970:2009, #change to 2009 for overlap period
+    Value = regional_results_ERA5Land[[region]][1:40],
+    Region = region,
+    Source = "ERA5Land"
+  )
+}))
+
+# Combine both datasets
+combined_data_raw <- bind_rows(ModESim_long, ModESim_long_bc, ERA5Land_long)
+#combined_data_bc <- bind_rows(ModESim_long_bc, ERA5Land_long) #bias corrected ModE-Sim
+
+#### colours x-axis
+# Define continent assignments
+continent_mapping <- list(
+  "Europe" = c("NEU", "WCE", "EEU", "MED"),
+  "North America" = c("NWN", "NEN", "WNA", "CNA", "ENA", "GIC"),
+  "Africa" = c("SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG"),
+  "Asia" = c("WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "WSB", "ESB", "RFE", "RAR"),
+  "Central America" =c("NCA", "SCA", "CAR"),
+  "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
+  "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
+)
+
+continent_colors <- c(
+  "Europe" = "#F5B0CB",
+  "North America" = "#236A3F",
+  "Africa" = "#91C7B1",
+  "Asia" = "#E5973B",
+  "Central America" = "#B33951",
+  "South America" = "#E3D081",
+  "Australia" = "#3C3980",
+  "Ocean" = "white"
+)
+
+# Extract unique regions from your data
+unique_regions <- unique(combined_data_raw$Region)
+
+# Initialize a named character vector for storing formatted labels.
+region_color_labels <- setNames(rep(NA, length(unique_regions)), unique_regions)
+
+
+# For each continent, assign the corresponding region labels that match
+for (continent in names(continent_mapping)) {
+  regions <- continent_mapping[[continent]]
+  for (region in regions) {
+    if (region %in% unique_regions) {
+      # Format the region label with the designated colour from continent_colors
+      region_color_labels[region] <- sprintf('<span style="color:%s;">%s</span>', 
+                                        continent_colors[continent], 
+                                        region)
+    }
+  }
+}
+
+# In case any regions haven't been matched, assign a default colour (e.g. black)
+for (region in unique_regions) {
+  if (is.na(region_color_labels[region])) {
+    region_color_labels[region] <- sprintf('<span style="color:%s;">%s</span>', "black", region)
+  }
+}
+
+
+library(ggtext)  # <-- needed to render markdown/html in ggplot
+
+# Create numeric index for Regions
+regions <- unique(combined_data_raw$Region)
+
+shade_data <- data.frame(
+  Region = regions,
+  xmin = seq_along(regions) - 0.5,
+  xmax = seq_along(regions) + 0.5,
+  shade = seq_along(regions) %% 2  # alternate
+)
+
+shade_data <- subset(shade_data, shade == 1)
+
+# Plot the violin plot
+bc_violin <- ggplot(combined_data_raw, aes(x = Region, y = Value, fill = Source)) +
+    # Add alternating background bands
+  geom_rect(
+    data = shade_data,
+    inherit.aes = FALSE,
+    aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+    fill = "grey90"
+  ) +
+  geom_violin(scale = "width", linewidth=0.2, adjust = .6) +
+  theme_classic() +
+  scale_fill_manual(
+    values = c( "ERA5Land" = "#B3001B", "ModESim" = "#FFBD00", "ModESim*" = "#255C99"),
+    labels = c(  "ERA5-Land", "ModE-Sim (raw)", "ModESim* (bc)")  # Or customize as you like
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, color="black", size=11),
+    axis.text.y = element_text(size = 12, color="black"),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size=12),
+    legend.position = c(0.2, 0.95),  # top-right corner inside plot
+    legend.justification = c("right", "top")) + # anchor point of the legend box) +  # Rotate x-axis labels
+  labs(title = "",
+       y = "PCWD [mm]",
+       x = "Region",
+       fill = "Data Set")
+
+bc_violin
+
+```
+
+```{r}
+# # Extract unique regions from your data
+# unique_regions <- unique(merged_results$Region)
+# 
+# # Initialize a named character vector for storing formatted labels.
+# region_color_labels <- setNames(rep(NA, length(unique_regions)), unique_regions)
+# 
+# 
+# # For each continent, assign the corresponding region labels that match
+# for (continent in names(continent_mapping)) {
+#   regions <- continent_mapping[[continent]]
+#   for (region in regions) {
+#     if (region %in% unique_regions) {
+#       # Format the region label with the designated colour from continent_colors
+#       region_color_labels[region] <- sprintf('<span style="color:%s;">%s</span>', 
+#                                         continent_colors[continent], 
+#                                         region)
+#     }
+#   }
+# }
+# 
+# # In case any regions haven't been matched, assign a default colour (e.g. black)
+# for (region in unique_regions) {
+#   if (is.na(region_color_labels[region])) {
+#     region_color_labels[region] <- sprintf('<span style="color:%s;">%s</span>', "black", region)
+#   }
+# }
+# 
+# 
+# library(ggtext)  # <-- needed to render markdown/html in ggplot
+# 
+# combined_data_raw <- bind_rows(ModESim_long, ERA5Land_long)
+# 
+# # Create numeric index for Regions
+# regions <- unique(combined_data_raw$Region)
+# 
+# shade_data <- data.frame(
+#   Region = regions,
+#   xmin = seq_along(regions) - 0.5,
+#   xmax = seq_along(regions) + 0.5,
+#   shade = seq_along(regions) %% 2  # alternate
+# )
+# 
+# shade_data <- subset(shade_data, shade == 1)
+# 
+# # Plot the violin plot
+# bc_violin <- ggplot(combined_data_raw, aes(x = Region, y = Value, fill = Source)) +
+#     # Add alternating background bands
+#   geom_rect(
+#     data = shade_data,
+#     inherit.aes = FALSE,
+#     aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+#     fill = "grey90"
+#   ) +
+#   geom_violin(scale = "width", linewidth=0.2, adjust = .6) +
+#   theme_classic() +
+#   scale_fill_manual(
+#     values = c( "ERA5Land" = "#B3001B", "ModESim" = "#FFBD00"),
+#     labels = c(  "ERA5-Land", "ModE-Sim (raw)")  # Or customize as you like
+#   ) +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1, color="black", size=11),
+#     axis.text.y = element_text(size = 12, color="black"),
+#     axis.title.x = element_text(size = 13),
+#     axis.title.y = element_text(size = 13),
+#     legend.title = element_text(face = "bold"),
+#     legend.text = element_text(size=12),
+#     legend.position = c(0.2, 0.95),  # top-right corner inside plot
+#     legend.justification = c("right", "top")) + # anchor point of the legend box) +  # Rotate x-axis labels
+#   labs(title = "",
+#        y = "PCWD [mm]",
+#        x = "Region",
+#        fill = "Data Set")
+# 
+# bc_violin
+```
+
+
+```{r}
+## combine bc plots for SI: 
+combined_bc_plots <- plot_grid(
+  RMSE_bc_boxplot, bc_violin,
+  ncol = 1,
+  nrow = 2,
+  rel_widths = c(1, 1),
+  align = "h",
+  axis = "tblr",
+  labels = c(
+    "a)",  "b) "
+  )
+  # label_size = 14,
+  # label_x = 0.09,
+  # hjust = 0,
+  # label_y = 0.95,
+  # vjust = 1
+)
+
+combined_bc_plots
+
+ggsave(
+  filename = here::here("figures/combined_bc_plots.pdf"),
+  plot     = combined_bc_plots,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 7.5,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+
+#### Internal variability vs forced signal in ModE-Sim
+```{r}
+library(tidyverse)
+
+# # List of regions where the first ensemble member should be removed
+# regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+# 
+# # Loop through each specified region and remove the first column (m001_tidy) - bias over Australia
+# for (region in regions_to_modify) {
+#   corrected_full[[region]] <- corrected_full[[region]][, -1]
+# }
+
+variability_summary <- map_dfr(names(corrected_full), function(region) {
+  mat <- corrected_full[[region]]  # 590 x 20
+  
+  ensemble_mean <- rowMeans(mat)           # forced signal (590,)
+  residuals     <- mat - ensemble_mean     # internal variability (590 x 20)
+  
+  tibble(
+    region        = region,
+    mean_pcwd     = mean(ensemble_mean),
+    sd_internal   = mean(apply(residuals, 1, sd)),  # avg internal spread
+    cv            = sd(rowMeans(mat)) / mean(rowMeans(mat)),
+    snr           = mean(ensemble_mean) / mean(apply(residuals, 1, sd))
+  )
+})
+
+# Define continent assignments
+continent_mapping <- list(
+  "Europe" = c("NEU", "WCE", "EEU", "MED"),
+  "North America" = c("NWN", "NEN", "WNA", "CNA", "ENA", "GIC"),
+  "Africa" = c("SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG"),
+  "Asia" = c("WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "WSB", "ESB", "RFE", "RAR"),
+  "Central America" =c("NCA", "SCA", "CAR"),
+  "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
+  "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
+)
+
+continent_colors <- c(
+  "Europe" = "#F5B0CB",
+  "North America" = "#236A3F",
+  "Africa" = "#91C7B1",
+  "Asia" = "#E5973B",
+  "Central America" = "#B33951",
+  "South America" = "#E3D081",
+  "Australia" = "#3C3980",
+  "Ocean" = "white"
+)
+
+# Convert list to a lookup data frame
+continent_df <- utils::stack(continent_mapping) %>%
+  rename(region = values, continent = ind)
+
+# Join onto your variability_summary
+variability_summary <- variability_summary %>%
+  left_join(continent_df, by = "region")
+
+# Assuming variability_summary has columns: region, snr, continent
+variability_summary %>%
+  arrange(snr) %>%
+  mutate(region = factor(region, levels = region)) %>%   # fix order
+  ggplot(aes(x = snr, y = region, color = continent)) +
+  
+  # Reference line at SNR = 1 (noise-dominated threshold)
+  #geom_vline(xintercept = 5, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  
+  # Lollipop stem
+  geom_segment(aes(x = 0, xend = snr, y = region, yend = region),
+               linewidth = 0.5, alpha = 0.8) +
+  
+  # Lollipop head
+  geom_point(size = 3) +
+  
+  scale_color_manual(values = continent_colors) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
+  
+  labs(
+    x     = "SNR",
+    y     = NULL,
+    color = "Continent",
+  ) +
+  
+  theme_classic() +
+  theme(
+    axis.text.y      = element_text(size = 10),
+    legend.position  = c(0.8, 0.2),
+    legend.title     = element_text(face = "bold"),
+    text             = element_text(size = 12),
+    axis.title.x     = element_text(margin = margin(t = 10)),
+    plot.caption     = element_text(color = "grey50", size = 9)
+  )
+
+ggsave(
+  filename = here::here("figures/SNR_regions.pdf"),
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 7.5,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+
+```{r}
+## Variations within the ensemble mean: 
+
+# Define the timeframe matching your 590 rows
+years <- 1420:2009
+
+# Step 1: Compute the ensemble mean for each region across all years
+# This reduces each region's matrix from [590, 20] or [590, 18] down to a single vector of 590
+ensemble_means_list <- lapply(corrected_full, rowMeans)
+
+# Step 2: Convert to a clean data frame and add the temporal axis
+ensemble_means_df <- as.data.frame(ensemble_means_list)
+ensemble_means_df$Year <- years
+
+# Step 3: Reshape data and calculate temporal variability metrics per region
+variability_summary_mean <- ensemble_means_df %>%
+  pivot_longer(cols = -Year, names_to = "Region", values_to = "Ensemble_Mean") %>%
+  group_by(Region) %>%
+  summarize(
+    Mean_Baseline = mean(Ensemble_Mean),
+    SD_Absolute   = sd(Ensemble_Mean),
+    CV_Relative   = sd(Ensemble_Mean) / mean(Ensemble_Mean),
+    Min_Value     = min(Ensemble_Mean),
+    Max_Value     = max(Ensemble_Mean),
+    Range_Absolute= max(Ensemble_Mean) - min(Ensemble_Mean),
+    .groups = "drop"
+  )
+
+# View summary table sorted by highest relative variability
+print(variability_summary_mean %>% arrange(desc(CV_Relative)))
+
+ggplot(variability_summary_mean, aes(x = reorder(Region, CV_Relative), y = CV_Relative)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Relative Temporal Variation (CV) of Ensemble Mean by IPCC Region",
+    subtitle = "Years 1420-2009",
+    x = "IPCC Region",
+    y = "Coefficient of Variation (SD / Mean)"
+  ) +
+  theme_minimal()
+
+# Extract the top 5 most variable regions based on CV
+top_5_regions <- variability_summary_mean %>% 
+  arrange(desc(CV_Relative)) %>% 
+  slice_head(n = 5) %>% 
+  pull(Region)
+
+# Plot their historical time-series
+ensemble_means_df %>%
+  pivot_longer(cols = -Year, names_to = "Region", values_to = "Ensemble_Mean") %>%
+  filter(Region %in% top_5_regions) %>%
+  ggplot(aes(x = Year, y = Ensemble_Mean, color = Region)) +
+  geom_line(alpha = 0.6) +
+  facet_wrap(~Region, scales = "free_y", ncol = 1) +
+  labs(
+    title = "Historical Ensemble Mean Trajectories (Top 5 Most Volatile Regions)",
+    x = "Year",
+    y = "Drought Index Ensemble Mean"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+#### Quantitative analysis 
+How many 2000 - 2024 ERA5Land values lie outside the EM range of ModE-Sim (i.e. are unprecedented?)
+Check how many regions lie outside of 2SD when considering whole ensemble member range? 
+
+Calculate how many modern PCWD values are truly unprecedented (max(ERA5) > max(ref))
+Calculate how many modern PCWD values are record shattering (max(ERA5) > (max(ref)+2sd*(ref))
+
+```{r}
+#------------reference values ERA5 - 2000-2024
+#Convert ERA5Land data to long format 
+ERA5Land_modern <- bind_rows(lapply(names(regional_results_ERA5Land), function(region) {
+  data.frame(
+    Year = 2000:2024, #change to 2009 for overlap period
+    PCWD = regional_results_ERA5Land[[region]][31:55], #indexing year 2000-2024
+    Region = region,
+    Source = "ERA5Land"
+  )
+}))
+
+
+#-----------reference values long context ModESim - 1420-1969
+# Convert ModESim data to long format
+years_ref <- 1420:1969
+n_years <- length(years_ref)
+
+ModESim_long <- bind_rows(
+  lapply(names(corrected_full), function(region) {
+
+    mat <- corrected_full[[region]]
+    sub <- mat[1:n_years, , drop = FALSE]
+
+    data.frame(
+      Year = rep(years_ref, times = ncol(sub)),
+      PCWD = as.vector(sub),
+      Ensemble = rep(colnames(sub), each = n_years),
+      Region = region,
+      Source = "ModESim"
+    )
+  })
+)
+
+
+#reference values short context ModESim - 1970-1999
+years_short <- 1970:1999
+n_years <- length(years_short)
+
+ModESim_short <- bind_rows(
+  lapply(names(corrected_full), function(region) {
+
+    mat <- corrected_full[[region]]
+    sub <- mat[551:580, , drop = FALSE]
+
+    data.frame(
+      Year = rep(years_short, times = ncol(sub)),
+      PCWD = as.vector(sub),
+      Ensemble = rep(colnames(sub), each = n_years),
+      Region = region,
+      Source = "ModESim"
+    )
+  })
+)
+
+##------------------ Calculate whether PCWD is unprecedented
+#Get reference ranges (1420–1969) for each region
+ref_range_long <- ModESim_long %>%
+  group_by(Region) %>%
+  summarise(ref_max = max(PCWD, na.rm = TRUE),
+            ref_maxsd = max(PCWD, na.rm = TRUE) + 2 * sd(PCWD, na.rm = TRUE),
+            .groups = "drop")
+
+#Get reference ranges (1970–1999) for each region
+ref_range_short <- ModESim_short %>%
+  group_by(Region) %>%
+  summarise(ref_max = max(PCWD, na.rm = TRUE),
+            ref_maxsd = max(PCWD, na.rm = TRUE) + 2 * sd(PCWD, na.rm = TRUE),
+            .groups = "drop")
+
+# 2. Compare modern period (2000–2024) to reference range
+########Long reference
+modern_outside_long <- ERA5Land_modern %>%
+  left_join(ref_range_long, by = "Region") %>%
+  filter(PCWD > ref_max) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_outside_long)
+n_regions_outside_long <- nrow(modern_outside_long)
+print(paste("In ", n_regions_outside_long, "out of 44 regions, PCWD is unprecendent in the long reference"))
+
+##########Short reference
+modern_outside_short <- ERA5Land_modern %>%
+  left_join(ref_range_short, by = "Region") %>%
+  filter(PCWD > ref_max) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_outside_short)
+n_regions_outside_short <- nrow(modern_outside_short)
+print(paste("In ", n_regions_outside_short, "out of 44 regions, PCWD is unprecendent in the short reference"))
+
+
+
+##------------------ Calculate whether PCWD is "record-shattering"
+# 2. Compare modern period (2000–2024) to reference range
+########Long reference
+modern_shattering_long <- ERA5Land_modern %>%
+  left_join(ref_range_long, by = "Region") %>%
+  filter(PCWD > ref_maxsd) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_shattering_long)
+n_regions_shattering_long <- nrow(modern_shattering_long)
+print(paste("In ", n_regions_shattering_long, "out of 44 regions, PCWD is record-shattering in the long reference"))
+
+##########Short reference
+modern_shattering_short <- ERA5Land_modern %>%
+  left_join(ref_range_short, by = "Region") %>%
+  filter(PCWD > ref_maxsd) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_shattering_short)
+n_regions_shattering_short <- nrow(modern_shattering_short)
+print(paste("In ", n_regions_shattering_short, "out of 44 regions, PCWD is record-shattering in the short reference"))
+
+
+
+```
+Compute the same for 25-year rolling means - general shift in PCWD distribution? 
+
+```{r}
+Modesim_25_long <- ModESim_long %>%
+  group_by(Region, Ensemble) %>%
+  arrange(Year, .by_group = TRUE) %>%
+  mutate(PCWD25 = slide_dbl(PCWD, mean, .before = 29, .complete = TRUE)) %>%
+  ungroup()
+
+Modesim_25_short <- ModESim_short %>%
+  group_by(Region, Ensemble) %>%
+  arrange(Year, .by_group = TRUE) %>%
+  mutate(PCWD25 = slide_dbl(PCWD, mean, .before = 29, .complete = TRUE)) %>%
+  ungroup()
+
+
+ERA5Land_means <- ERA5Land_modern %>%
+  group_by(Region) %>%
+  summarise(PCWD_mean = mean(PCWD, na.rm = TRUE), .groups = "drop")
+
+
+#----------------Calculate whether ERA5Land means are above reference running means
+#Get reference ranges (1420–1969) for each region
+ref_range_long25 <- Modesim_25_long %>%
+  group_by(Region) %>%
+  summarise(ref_max = max(PCWD25, na.rm = TRUE),
+            .groups = "drop")
+
+#Get reference ranges (1970–1999) for each region
+ref_range_short25 <- Modesim_25_short %>%
+  group_by(Region) %>%
+  summarise(ref_max = max(PCWD25, na.rm = TRUE),
+            .groups = "drop")
+
+# 2. Compare modern period (2000–2024) to reference range
+########Long reference
+modern_outside_long25 <- ERA5Land_means %>%
+  left_join(ref_range_long25, by = "Region") %>%
+  filter(PCWD_mean > ref_max) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_outside_long25)
+n_regions_outside_long25 <- nrow(modern_outside_long25)
+print(paste("In ", n_regions_outside_long25, "out of 44 regions, mean PCWD is unprecendent in the long reference"))
+
+##########Short reference
+modern_outside_short25 <- ERA5Land_means %>%
+  left_join(ref_range_short25, by = "Region") %>%
+  filter(PCWD_mean > ref_max) %>%
+  distinct(Region)
+
+# 3. Count how many regions
+print(modern_outside_short25)
+n_regions_outside_short25 <- nrow(modern_outside_short25)
+print(paste("In ", n_regions_outside_short25, "out of 44 regions, mean PCWD is unprecendent in the short reference"))
+
+```
+
+### Absolute values timeseries of bias corrected ModE-Sim and ERA5-Land - visualisation
+
+Include rolling 25-year anomalies as thin black line with highlighted events
+
+```{r}
+# Initialize list to store rolling 30-year means
+rolling_means <- list()
+
+# Define window size
+window_size <- 25
+half_window <- (window_size - 1) / 2
+
+start_year <- 1420
+end_year   <- 2009
+
+centers <- seq(start_year, end_year - window_size + 1) + half_window
+
+# Compute rolling means for each ensemble member
+for (region_name in names(corrected_full)) {
+  
+  # Extract ensemble members for the region
+  ensemble_members <- corrected_full[[region_name]][2:590,]
+  num_years <- nrow(ensemble_members)
+  
+  # Initialize matrix to store rolling means
+  rolling_mean_matrix <- matrix(NA, nrow=num_years - window_size + 1, ncol=ncol(ensemble_members))
+  
+  # Compute rolling means
+  for (t in 1:(num_years - window_size + 1)) {
+    rolling_mean_matrix[t, ] <- colMeans(ensemble_members[t:(t+window_size-1), ], na.rm = TRUE)
+  }
+  
+  # Store rolling means
+  rolling_means[[region_name]] <- rolling_mean_matrix
+}
+
+rolling_means_long <-  do.call(rbind, lapply(names(rolling_means), function(region) {
+  df <- as.data.frame(rolling_means[[region]])
+  df$time <- centers[1:nrow(df)]
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "rolling_means")
+  return(df_long)
+}))
+
+
+```
+
+
+Calculate 600 year rolling anomalies from bias corrected ModE-Sim data with complete data as reference period
+```{r}
+
+# Initialize lists to store baselines
+anom_baseline <- list()
+
+# Compute baseline mean from all values of rolling mean
+for (region_name in names(rolling_means)) {
+  rolling_mean_matrix <- rolling_means[[region_name]]
+  
+  anom_baseline[[region_name]] <- mean(rolling_mean_matrix, na.rm = TRUE)  ### for reference period of first 25 values: rolling_mean_matrix[1:25,]
+}
+
+# Initialize lists to store anomalies
+ensemble_25anom <- list()
+
+# Compute anomalies
+for (region_name in names(rolling_means)) {
+  rolling_mean_matrix <- rolling_means[[region_name]]
+  num_years <- nrow(rolling_mean_matrix)
+  
+  # Initialize matrix to store anomalies
+  anoms <- matrix(NA, nrow=num_years, ncol=ncol(rolling_mean_matrix))
+  
+  # Compute anomalies using rolling mean baseline
+  for (t in 1:num_years) {
+    anoms[t, ] <- (rolling_mean_matrix[t, ] - anom_baseline[[region_name]])
+  }
+  
+  # Store results
+  ensemble_25anom[[region_name]] <- anoms
+}
+
+# Compute mean anomalies across ensemble members
+mean_25anom <- list()
+for (region_name in names(ensemble_25anom)) {
+  mean_25anom[[region_name]] <- rowMeans(ensemble_25anom[[region_name]], na.rm = TRUE)
+}
+
+# Compute region-specific pooled standard deviation using only the first 25 years
+pooled_sd_by_region <- list()
+for (region_name in names(ensemble_25anom)) {
+  # Extract only the first 25 years of anomalies
+  first_25_years <- ensemble_25anom[[region_name]]
+  
+  # Compute pooled standard deviation over these values
+  pooled_sd_by_region[[region_name]] <- sd(unlist(first_25_years), na.rm = TRUE)
+}
+
+# Convert ensemble data into a long format for plotting individual members
+anoms_long <- do.call(rbind, lapply(names(ensemble_25anom), function(region) {
+  df <- as.data.frame(ensemble_25anom[[region]])
+  df$time <- centers[1:nrow(df)]
+  df$region <- region
+  df_long <- pivot_longer(df, cols = -c(time, region), names_to = "ensemble_member", values_to = "anomalies")
+  return(df_long)
+}))
+
+# Add a continent column
+anoms_long$continent <- NA  # Initialize continent column
+for (continent in names(continent_mapping)) {
+  anoms_long$continent[anoms_long$region %in% continent_mapping[[continent]]] <- continent
+}
+
+
+```
+
+
+Anomaly timeseries plot with bias corrected data for selected regions: 
+
+```{r}
+####-----------------------------------------------------------------------
+selected_region <- "MED"
+anoms_filtered <- anoms_long %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - pooled_sd,
+    upper_bound = first_mean_anomaly + pooled_sd
+  )
+
+anom_MED <- ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.4, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "",
+    y = "PCWD anomalies [mm] w.r.t 1420-1445"
+    #,title = paste("Rolling 25yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 15),
+    strip.background = element_rect(fill = "#F5B0CB"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11), 
+    axis.title.x = element_text(size = 11),
+    axis.title.y = element_text(size = 11)
+  ) +
+  
+  facet_wrap(~region, scales = "free_y")
+
+#######---------------------------------------------------------------------------------
+selected_region <- "WNA"
+anoms_filtered <- anoms_long %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - pooled_sd,
+    upper_bound = first_mean_anomaly + pooled_sd
+  )
+
+anom_WNA <- ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "",
+    y = ""
+    #,title = paste("Rolling 25yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 15, color = "white"),
+    strip.background = element_rect(fill = "#236A3F"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11), 
+    axis.title.x = element_text(size = 11),
+    axis.title.y = element_text(size = 11)
+  ) +
+  
+  facet_wrap(~region, scales = "free_y")
+
+###########------------------------------------------------------------
+selected_region <- "ARP"
+anoms_filtered <- anoms_long %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - pooled_sd,
+    upper_bound = first_mean_anomaly + pooled_sd
+  )
+
+anom_ARP <- ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = "PCWD anomalies [mm] w.r.t 1420-1445"
+    #,title = paste("Rolling 25yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 15),
+    strip.background = element_rect(fill = "#E5973B"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11), 
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 11)
+  ) +
+  
+  facet_wrap(~region, scales = "free_y")
+
+###----------------------------------------------------------------------------
+selected_region <- "CAU"
+anoms_filtered <- anoms_long %>% filter(region == selected_region)
+
+# Compute mean anomalies per (time, region)
+mean_anomalies_filtered <- anoms_filtered %>%
+  group_by(time, region) %>%
+  summarise(
+    mean_anomaly = mean(anomalies, na.rm = TRUE),
+    pooled_sd = pooled_sd_by_region[[unique(region)]]
+  ) %>%
+  ungroup()
+
+# Extract the first year's mean anomaly per region
+first_year_mean <- mean_anomalies_filtered %>%
+  group_by(region) %>%
+  arrange(time) %>%
+  slice_head(n = 1) %>%  # Take only the first year
+  dplyr::select(region, first_mean_anomaly = mean_anomaly) %>%
+  ungroup()
+
+# Join back and compute fixed bounds
+mean_anomalies_filtered <- mean_anomalies_filtered %>%
+  left_join(first_year_mean, by = "region") %>%
+  mutate(
+    lower_bound = first_mean_anomaly - pooled_sd,
+    upper_bound = first_mean_anomaly + pooled_sd
+  )
+
+anom_CAU <- ggplot() +
+  geom_hline(yintercept = 0, color= "grey40", linetype="dashed")+
+
+  # Plot individual ensemble members with distinct colors
+  geom_line(data = anoms_filtered, aes(x = time, y = anomalies, group = ensemble_member, color = "Ensemble Members"), alpha = 0.5, linewidth = 0.3, show.legend = TRUE) +
+  # Plot mean anomaly as a bold black line
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = mean_anomaly, color = "PCWD"), linewidth = 1, show.legend = TRUE) +
+  # Dashed lines for ±2σ bounds
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = lower_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  geom_line(data = mean_anomalies_filtered, aes(x = time, y = upper_bound, color = "2σ"), linetype = "dashed", show.legend = TRUE) +
+  labs(
+    x = "Year",
+    y = ""
+    #,title = paste("Rolling 25yr PCWD anomalies for", selected_continent)
+  ) +
+  # Manual color scale for legend
+  scale_color_manual(
+    values = c("2σ" = "red", "Ensemble Members" = "grey60", "PCWD" = "black"),
+    labels = c("± 2σ (reference)", "Ensemble Members", "PCWD (Mean)")
+  ) +
+
+  # Customize the legend
+  guides(
+    color = guide_legend(title = "Legend", override.aes = list(alpha = 1, linewidth = 1))
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 15,color = "white"),
+    strip.background = element_rect(fill = "#3C3980"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11), 
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 11)
+  ) +
+  
+  facet_wrap(~region, scales = "free_y")
+```
+
+Test - ModESim MED annmax PCWD distribution as context for ERA5Land extremes
+
+```{r}
+## select MED region data
+MED_ERA5 <- regional_results_ERA5Land[["MED"]]
+
+#ModESim data
+MED_MODE <- corrected_full[["MED"]]
+
+#attach time dimension
+time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
+time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2024))
+
+
+# Convert ModE dataset to long format
+MED_MODE_long <- MED_MODE %>%
+  as.data.frame() %>%
+  mutate(time = time_info_mode) %>%
+  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
+
+# Compute means
+MED_MODE_mean <- MED_MODE_long %>%
+  group_by(time) %>%
+  summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
+
+# Convert ERA5 dataset into long format
+MED_ERA5_df <- data.frame(time = time_info_era, PCWD = MED_ERA5)
+
+## Calculation return period values 
+
+baseline <- MED_ERA5[5:30] ##1975-1999
+fit_ref <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
+MED_era_ref_5yr <- round(as.numeric(extRemes::return.level(fit_ref, return.period = 5)))
+
+baseline <- MED_ERA5[31:55] ##1970-1999
+fit_mod <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
+MED_era_mod_5yr <- round(as.numeric(extRemes::return.level(fit_mod, return.period = 5)))
+
+baseline <- as.vector(MED_MODE[535:560,])  #1975-1999
+fit_ref <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
+MED_ModESim_ref_5yr <- round(as.numeric(extRemes::return.level(fit_ref, return.period = 5)))
+
+baseline <- as.vector(MED_MODE[1:534,])  #1420-1969
+fit_full <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
+MED_ModESim_full_5yr <- round(as.numeric(extRemes::return.level(fit_full, return.period = 5)))
+
+
+# 1) extract 1970-1999 of the wide matrix, then pivot
+MED_last60_long <- MED_MODE[(nrow(MED_MODE)-35):(nrow(MED_MODE)-10), ] %>%
+  as.data.frame() %>%
+  pivot_longer(cols = everything(),
+               names_to  = "ensemble",
+               values_to = "PCWD")
+
+# Convert ModE dataset to long format 1420 - 1969
+MED_MODE_long_sel <- MED_MODE %>%
+  as.data.frame() %>%
+  mutate(time = time_info_mode) %>%
+  filter(time < 1975) %>%
+  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
+
+# 1) extract last 60 rows of the wide matrix, then pivot
+MED_ERA5_long <- MED_ERA5[5:30] %>%
+  as.data.frame() %>%
+  pivot_longer(cols = everything(),
+              names_to  = "year",
+               values_to = "PCWD")
+
+MED_ERA5_last30 <- MED_ERA5[31:55] %>%
+  as.data.frame() %>%
+  pivot_longer(cols = everything(),
+              names_to  = "year",
+               values_to = "PCWD")
+
+ggplot() +
+  # full‑data density
+  geom_density(
+    data    = MED_MODE_long_sel,
+    aes(x   = PCWD,
+    color   = factor("ModESim_fill_full"),
+    fill    = factor("ModESim_fill_full")),
+    alpha   = 0.8,
+    linewidth    = 0.6,
+    show.legend = TRUE
+  ) +
+  # last‑60 density
+  geom_density(
+    data    = MED_last60_long,
+    aes(x   = PCWD,
+    color   = factor("ModESim_fill"),
+    fill    = factor("ModESim_fill")),
+    alpha   = 0.8,
+    linewidth    = 0.6,
+    show.legend = TRUE
+  ) +
+    # first‑60 density
+  geom_density(
+    data    = MED_ERA5_long,
+    aes(x   = PCWD,
+    color   = factor("ERA5_fill"),
+    fill    = factor("ERA5_fill")),
+    alpha   = 0.6,
+    linewidth    = 0.6,
+    show.legend = TRUE
+  ) +
+  geom_density(
+    data    = MED_ERA5_last30,
+    aes(x   = PCWD,
+    color   = factor("ERA5_fill_last30"),
+    fill    = factor("ERA5_fill_last30")),
+    alpha   = 0.6,
+    linewidth    = 0.6,
+    show.legend = TRUE
+  ) +
+  geom_vline(aes(xintercept = MED_ModESim_full_5yr, color = factor("ModESim_full")), linetype = "dashed", linewidth=0.9) +
+  geom_vline(aes(xintercept = MED_ModESim_ref_5yr, color = factor("ModESim_ref")), linetype = "dashed", linewidth=0.9) +
+  geom_vline(aes(xintercept = MED_era_ref_5yr, color = factor("ERA_ref")), linetype = "dashed", linewidth=0.9) +
+  geom_vline(aes(xintercept = MED_era_mod_5yr, color = factor("ERA_mod")), linetype = "dashed", linewidth=0.9) +
+    labs(
+    x = "PCWD [mm]",
+    y = "Density",
+    title = "MED Extreme Value Distribution"
+  ) +
+  theme_minimal() +
+ scale_fill_manual(
+    name = "Data Source",
+    values = c("ModESim_fill_full" = "#255C99","ModESim_fill" = "#91C499", "ERA5_fill" = "#A25E8E", "ERA5_fill_last30" = "#B3001B") ,
+    labels = c("ModE-Sim* (1420-1974)", "ModE-Sim* (1975-1999)", "ERA5-Land (1975-1999)", "ERA5-Land (2000-2024)")
+  )+
+  scale_color_manual(
+    name = "5-year Event",
+    values = c("ModESim_full" = "#17385E", "ModESim_ref" = "#628567", "ERA_ref" = "#E8B5CC", "ERA_mod" = "#870014"),
+    labels = c("ModE-Sim* (1420 - 1974)", "ModE-Sim* (1975 - 1999)", "ERA5Land (1975 - 1999)", "ERA5Land (2000 - 2024)")
+    #guide = guide_legend(override.aes = list(fill= NA,shape = NA, color = "white"))
+  )+
+
+    theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.key = element_rect(fill   = NA,    # transparent fill
+                              colour = NA),# no border
+    legend.title = element_text(face = "bold")
+  )
+
+
+# ggsave(
+#   filename = here::here("manuscript/Annmax_PCWD_Timeseries_Density_legend.pdf"),
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 12,           # in inches
+#   height   = 6,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
+
+```
+
+
+Function that does the plotting for all regions: 
+
+```{r}
+# ------------------------------------------------------------------------------
+# Helper: prepare the four slices + FEVD-based 5‑yr return levels
+# ------------------------------------------------------------------------------
+prepare_region_data <- function(region,
+                                corrected_full,
+                                regional_results_ERA5Land,
+                                mode_years = 1420:2009,
+                                era5_years = 1970:2024,
+                                drop_initial_years = 2) {
+  MODE_mat <- corrected_full[[region]]
+  ERA5_vec <- regional_results_ERA5Land[[region]]
+  
+  # Time‐series data
+  MODE_long <- MODE_mat %>%
+    as.data.frame() %>%
+    mutate(time = mode_years) %>%
+    pivot_longer(-time, names_to = "ensemble", values_to = "PCWD")
+  
+  MODE_mean <- MODE_long %>% group_by(time) %>% summarise(PCWD = mean(PCWD, na.rm=TRUE), .groups="drop")
+  
+  ERA5_df   <- data.frame(time = era5_years, PCWD = ERA5_vec)
+  
+  # ———————— drop the first `drop_initial_years` rows ————————
+  MODE_long <- MODE_long %>% 
+    filter(time >= mode_years[drop_initial_years])
+  
+  MODE_mean <- MODE_mean %>% 
+    filter(time >= mode_years[drop_initial_years])
+  # ——————————————————————————————————————————————————————————————
+  
+  # Four density slices
+  MODE_full <- MODE_long %>% filter(time < 1975)
+  MODE_ref  <- MODE_long %>% filter(time >= 1975 & time <= 1999)
+  ERA5_ref  <- ERA5_df   %>% filter(time >= 1975 & time <= 1999)
+  ERA5_mod  <- ERA5_df   %>% filter(time >= 2000)
+  
+  # FEVD + 5‑yr return level
+  fit_rl <- function(x) {
+    fit <- fevd(x, type="Gumbel", method="MLE", units="years")
+    round(as.numeric(return.level(fit, return.period = 5)))
+  }
+  rl <- list(
+    MODE_full    = fit_rl(MODE_full$PCWD),
+    MODE_ref     = fit_rl(MODE_ref$PCWD),
+    ERA5_ref     = fit_rl(ERA5_ref$PCWD),
+    ERA5_mod     = fit_rl(ERA5_mod$PCWD)
+  )
+  
+  list(
+    MODE_long   = MODE_long,
+    MODE_mean   = MODE_mean,
+    ERA5_df     = ERA5_df,
+    MODE_full   = MODE_full,
+    MODE_ref    = MODE_ref,
+    ERA5_ref    = ERA5_ref,
+    ERA5_mod    = ERA5_mod,
+    rl          = rl
+  )
+}
+
+```
+
+```{r}
+#Timeseries function alone: 
+plot_region_PCWD_ts <- function(region_code) {
+  
+  dat <- prepare_region_data(region_code,
+                             corrected_full,
+                             regional_results_ERA5Land)
+  
+  # Compute anomalies + bounds + exceedance runs
+  anoms_filtered <- anoms_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      mean_anomaly = mean(anomalies, na.rm=TRUE),
+      pooled_sd    = pooled_sd_by_region[[region_code]],
+      .groups = "drop"
+    )
+  
+  first_mean <- anoms_filtered %>%
+    arrange(time) %>%
+    slice(1) %>%
+    pull(mean_anomaly)
+  
+  anoms_filtered <- anoms_filtered %>%
+    mutate(
+      lower_bound = first_mean - pooled_sd,
+      upper_bound = first_mean + pooled_sd,
+      exceeds     = mean_anomaly < lower_bound | mean_anomaly > upper_bound,
+      direction   = case_when(
+        mean_anomaly > upper_bound ~ "drier",
+        mean_anomaly < lower_bound ~ "wetter",
+        TRUE ~ NA_character_
+      ),
+      run_id      = data.table::rleid(exceeds)
+    )
+  
+  exceed_periods <- anoms_filtered %>%
+    filter(exceeds) %>%
+    group_by(run_id, direction) %>%
+    summarise(
+      start = min(time),
+      end   = max(time),
+      .groups="drop"
+    )
+  
+  # Filter rolling means
+  rolling_filtered <- rolling_means_long %>%
+    filter(region == region_code) %>%
+    group_by(time) %>%
+    summarise(
+      mean_rolling = mean(rolling_means, na.rm=TRUE),
+      .groups = "drop"
+    )
+  
+  # y-limits
+  y_limits     <- range(c(dat$MODE_long$PCWD, dat$ERA5_df$PCWD), na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
+  
+  # Compute max of each ensemble for dotted lines
+  ensemble_max <- dat$MODE_long %>%
+    group_by(ensemble) %>%
+    summarise(max_PCWD = max(PCWD, na.rm=TRUE), .groups = "drop") %>%
+    summarise(max_max = max(max_PCWD, na.rm = TRUE), .groups="drop") %>%
+    mutate(label = "Ens_maximum")
+  
+  # Build ggplot
+  p_ts <- ggplot()
+  
+  # Exceedance rectangles colored by direction
+  if (nrow(exceed_periods) > 0) {
+    p_ts <- p_ts + 
+      geom_rect(
+        data = exceed_periods,
+        aes(xmin = start, xmax = end, 
+            ymin = y_limits[1], ymax = y_limits[2],
+            fill = direction),
+        inherit.aes = FALSE,
+        alpha = 0.4
+      ) 
+  }
+  p_ts <- p_ts +
+    geom_line(data = dat$MODE_long, aes(time, PCWD, group=ensemble, color = factor("EMs_ModE")), linewidth=0.3, alpha=0.4) +
+    geom_line(data = dat$MODE_mean, aes(time, PCWD, color = factor("Mean_ModE")), linewidth = 0.8) +
+    geom_line(data = rolling_filtered, aes(time, mean_rolling, color="rolling_mean"), linewidth=0.7) +
+    geom_line(data = dat$ERA5_df, aes(time, PCWD, color = factor("ERA5")), linewidth = 0.8) +
+    geom_hline(data = ensemble_max, aes(yintercept = max_max, color= factor("Ens_maximum")),linetype="dotted", linewidth=0.5)+
+    scale_y_continuous(limits=y_limits, breaks=common_breaks) +
+    scale_color_manual(name = "Data",
+      values = c(
+        "EMs_ModE"  = "#7EA3CC",
+        "Mean_ModE" = "#255C99",
+        "rolling_mean"="black", 
+        "ERA5"      = "#B3001B", 
+        "Ens_maximum"= "grey30"
+      ),
+      labels = c(
+        "EMs - ModE-Sim*", "Mean - ModE-Sim*", "25-yr rolling\nmean - ModE-Sim*", "ERA5-Land", "ModE-Sim* - max PCWD")
+      ) +
+      scale_fill_manual(name ="Exceedances", values = c("wetter" = "#136E40", "drier" = "#F4DE70" ),
+      labels = c("wetter", "drier")
+    ) +
+    labs(x = "Year", y = "PCWD [mm]", color = "Data") +
+    theme_classic(base_size = 14) +
+    theme(axis.title.y = element_text(margin=margin(r=10)),
+          legend.position="none", legend.title = element_text(face="bold"))
+  
+  return(p_ts)
+}
+
+ts_MED <- plot_region_PCWD_ts("MED")
+ts_MED
+```
+
+```{r}
+#density plot function alone: 
+plot_region_PCWD_density <- function(region_code) {
+  
+  dat <- prepare_region_data(region_code,
+                             corrected_full,
+                             regional_results_ERA5Land)
+  
+  # y-limits
+  y_limits     <- range(c(dat$MODE_long$PCWD, dat$ERA5_df$PCWD), na.rm=TRUE)
+  common_breaks <- pretty(y_limits, n=6)
+  
+  p_den <- ggplot() +
+    geom_density(data = dat$MODE_full,
+                 aes(y=PCWD, x=after_stat(density),
+                     fill="ModESim_full"),
+                 alpha=0.8, size=0.6, trim = FALSE) +
+    geom_density(data = dat$MODE_ref,
+                 aes(y=PCWD, x=after_stat(density),
+                     fill="ModESim_ref"),
+                 alpha=0.8, size=0.6, trim = FALSE) +
+    geom_density(data = dat$ERA5_ref,
+                 aes(y=PCWD, x=after_stat(density),
+                     fill="ERA5_70_99"),
+                 alpha=0.6, size=0.6, trim = FALSE) +
+    geom_density(data = dat$ERA5_mod,
+                 aes(y=PCWD, x=after_stat(density),
+                     fill="ERA5_00_24"),
+                 alpha=0.6, size=0.6, trim = FALSE) +
+    # 
+    # geom_hline(aes(yintercept=dat$rl$MODE_full,  color="ModESim_full_lin"),
+    #            linetype="dashed", size=0.8) +
+    # geom_hline(aes(yintercept=dat$rl$MODE_ref,   color="ModESim_ref_lin"),
+    #            linetype="dashed", size=0.8) +
+    # geom_hline(aes(yintercept=dat$rl$ERA5_ref,   color="ERA5_70_99_lin"),
+    #            linetype="dashed", size=0.8) +
+    # geom_hline(aes(yintercept=dat$rl$ERA5_mod,   color="ERA5_00_24_lin"),
+    #            linetype="dashed", size=0.8) +
+    
+    scale_fill_manual(
+      name   = "Period",
+      breaks = c("ModESim_full", "ModESim_ref", "ERA5_70_99", "ERA5_00_24"),
+      values = c(
+        ModESim_full  = "#255C99",
+        ModESim_ref   = "#91C499",
+        ERA5_70_99    = "#A25E8E",
+        ERA5_00_24    = "#B3001B"
+      ),
+      labels = c(
+        "ModE-Sim* (1420-1974)",
+        "ModE-Sim* (1975-1999)",
+        "ERA5-Land (1975-1999)",
+        "ERA5-Land (2000-2024)"
+      )
+    ) +
+    # scale_color_manual(
+    #   name   = "5-year Event",
+    #   breaks = c("ModESim_full_lin", "ModESim_ref_lin", "ERA5_70_99_lin", "ERA5_00_24_lin"),
+    #   values = c(
+    #     ModESim_full_lin  = "#17385E",
+    #     ModESim_ref_lin   = "#628567",
+    #     ERA5_70_99_lin    = "#E8B5CC",
+    #     ERA5_00_24_lin    = "#870014"
+    #   ),
+    #   labels = c(
+    #     "ModE-Sim* (1420-1969)",
+    #     "ModE-Sim* (1970-1999)",
+    #     "ERA5-Land (1970-1999)",
+    #     "ERA5-Land (2000-2024)"
+    #   ))
+    # +
+    labs(x="Density", y=NULL) +
+    theme_classic(base_size=14) +
+    theme(
+      plot.title     = element_text(hjust=0.5, face="bold"),
+      legend.key     = element_rect(fill=NA, colour=NA),
+      legend.title   = element_text(face="bold"),
+      text           = element_text(size=14),
+      axis.title.y   = element_text(margin=margin(r=10)),
+      legend.position = "none"
+    )+
+    scale_y_continuous(limits = y_limits, breaks = common_breaks)
+  
+  return(p_den)
+}
+
+den_MED <- plot_region_PCWD_density("MED")
+den_MED
+```
+
+```{r}
+
+##### save legends
+# ts_MED
+# ggsave(
+#   filename = here::here("figures/Annmax_PCWD_Timeseries_legend_wet.pdf"),
+#   plot     = ts_MED,
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 10,           # in inches
+#   height   = 8,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
+# 
+# den_MED
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_legend.pdf"),
+  plot     = den_MED,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+
+Combine multiple panels into one and save: 
+
+```{r}
+##for Fig. 1 in paper: 
+
+# Example:
+plot_MED_ts <- plot_region_PCWD_ts("MED")
+plot_MED_ts <- plot_MED_ts + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_ARP_ts <- plot_region_PCWD_ts("ARP")
+plot_WNA_ts <- plot_region_PCWD_ts("WNA")
+plot_CAU_ts <- plot_region_PCWD_ts("CAU")
+
+plot_MED_den <- plot_region_PCWD_density("MED")
+plot_MED_den <- plot_MED_den + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_ARP_den <- plot_region_PCWD_density("ARP")
+plot_WNA_den <- plot_region_PCWD_density("WNA")
+plot_CAU_den <- plot_region_PCWD_density("CAU")
+
+
+combined2all <- plot_grid(
+  plot_MED_ts,plot_MED_den, plot_WNA_ts, plot_WNA_den, plot_ARP_ts,plot_ARP_den, plot_CAU_ts,
+     plot_CAU_den,
+  nrow        = 4,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) MED – Mediterranean",  "e)", 
+    "b) WNA – Western North America", "f)",
+    "c) ARP – Arabian Peninsula", "g)",
+    "d) CAU – Central Australia","h)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1),
+  expand      = TRUE  
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Fig.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+Plot by continent for supplementary material: 
+
+```{r}
+
+##EUROPE
+plot_NEU_ts <- plot_region_PCWD_ts("NEU")
+plot_NEU_ts <- plot_NEU_ts + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_WCE_ts <- plot_region_PCWD_ts("WCE")
+plot_EEU_ts <- plot_region_PCWD_ts("EEU")
+plot_MED_ts <- plot_region_PCWD_ts("MED")
+
+plot_NEU_den <- plot_region_PCWD_density("NEU")
+plot_NEU_den <- plot_NEU_den + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_WCE_den <- plot_region_PCWD_density("WCE")
+plot_EEU_den <- plot_region_PCWD_density("EEU")
+plot_MED_den <- plot_region_PCWD_density("MED")
+
+combined2all <- plot_grid(
+  plot_NEU_ts, plot_NEU_den, plot_WCE_ts,plot_WCE_den, plot_EEU_ts, plot_EEU_den,plot_MED_ts,plot_MED_den,
+  nrow        = 4,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) EUROPE - NEU", "e)",
+    "b) EUROPE - WCE", "f)",
+    "c) EUROPE - EEU", "g)",
+    "d) EUROPE - MED" , "h)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1)
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Europe.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+###NORTH AMERICA
+plot_NWN <- plot_region_PCWD_ts("NWN")
+plot_NWN <- plot_NWN+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_NEN <- plot_region_PCWD_ts("NEN")
+plot_WNA <- plot_region_PCWD_ts("WNA")
+plot_CNA <- plot_region_PCWD_ts("CNA")
+plot_ENA <- plot_region_PCWD_ts("ENA")
+plot_GIC <- plot_region_PCWD_ts("GIC")
+
+plot_NWN_den <- plot_region_PCWD_density("NWN")
+plot_NWN_den <- plot_NWN_den + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_NEN_den <- plot_region_PCWD_density("NEN")
+plot_WNA_den <- plot_region_PCWD_density("WNA")
+plot_CNA_den <- plot_region_PCWD_density("CNA")
+plot_ENA_den <- plot_region_PCWD_density("ENA")
+plot_GIC_den <- plot_region_PCWD_density("GIC")
+
+
+combined2all <- plot_grid(
+  plot_NWN,plot_NWN_den, plot_NEN,plot_NEN_den, plot_WNA,plot_WNA_den, plot_CNA,plot_CNA_den,plot_ENA, plot_ENA_den,plot_GIC,plot_GIC_den,
+  nrow        = 6,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) NORTH AMERICA - NWN", "g)",
+    "b) NORTH AMERICA - NEN", "h)",
+    "c) NORTH AMERICA - WNA", "i)",
+    "d) NORTH AMERICA - CNA", "j)",
+    "e) NORTH AMERICA - ENA", "k)",
+    "f) NORTH AMERICA - GIC", "l)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.978,   # just below the top
+  vjust   = 1,       # align text at its top,
+  rel_widths = c(2, 1)
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_NorthAmerica.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+
+#### AFRICA
+plot_SAH <- plot_region_PCWD_ts("SAH")
+plot_SAH <- plot_SAH+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_WAF <- plot_region_PCWD_ts("WAF")
+plot_CAF <- plot_region_PCWD_ts("CAF")
+plot_NEAF <- plot_region_PCWD_ts("NEAF")
+plot_SEAF <- plot_region_PCWD_ts("SEAF")
+plot_WSAF <- plot_region_PCWD_ts("WSAF")
+plot_ESAF <- plot_region_PCWD_ts("ESAF")
+plot_MDG <- plot_region_PCWD_ts("MDG")
+
+plot_SAH_den <- plot_region_PCWD_density("SAH")
+plot_SAH_den <- plot_SAH_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_WAF_den <- plot_region_PCWD_density("WAF")
+plot_CAF_den <- plot_region_PCWD_density("CAF")
+plot_NEAF_den <- plot_region_PCWD_density("NEAF")
+plot_SEAF_den <- plot_region_PCWD_density("SEAF")
+plot_WSAF_den <- plot_region_PCWD_density("WSAF")
+plot_ESAF_den <- plot_region_PCWD_density("ESAF")
+plot_MDG_den <- plot_region_PCWD_density("MDG")
+
+
+
+combined2all <- plot_grid(
+  plot_SAH,plot_SAH_den, plot_WAF, plot_WAF_den,plot_CAF,plot_CAF_den, plot_NEAF,plot_NEAF_den,
+  plot_SEAF, plot_SEAF_den,plot_WSAF,plot_WSAF_den,plot_ESAF,plot_ESAF_den, plot_MDG,plot_MDG_den,
+  nrow        = 8,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) AFRICA - SAH", "i)",
+    "b) AFRICA - WAF", "j)",
+    "c) AFRICA - CAF", "k)",
+    "d) AFRICA - NEAF", "l)",
+    "e) AFRICA - SEAF", "m)",
+    "f) AFRICA - WSAF", "n)",
+    "g) AFRICA - ESAF", "o)",
+    "h) AFRICA - MDG", "p)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.98,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1)
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Africa.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 17,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+
+#### Asia
+plot_WCA <- plot_region_PCWD_ts("WCA")
+plot_WCA <- plot_WCA+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_ARP <- plot_region_PCWD_ts("ARP")
+plot_WSB <- plot_region_PCWD_ts("WSB")
+plot_RAR <- plot_region_PCWD_ts("RAR")
+plot_ESB <- plot_region_PCWD_ts("ESB")
+
+plot_WCA_den <- plot_region_PCWD_density("WCA")
+plot_WCA_den <- plot_WCA_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_ARP_den <- plot_region_PCWD_density("ARP")
+plot_WSB_den <- plot_region_PCWD_density("WSB")
+plot_RAR_den <- plot_region_PCWD_density("RAR")
+plot_ESB_den <- plot_region_PCWD_density("ESB")
+
+
+combined2all <- plot_grid(
+  plot_WCA, plot_WCA_den,plot_ARP,plot_ARP_den, plot_WSB, plot_WSB_den,plot_RAR,plot_RAR_den,plot_ESB,plot_ESB_den,
+  nrow        = 5,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) ASIA - WCA", "f)",
+    "b) ASIA - ARP", "g)",
+    "c) ASIA - WSB", "h)",
+    "d) ASIA - RAR", "i)",
+    "e) ASIA - ESB", "j)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1  ,     # align text at its top
+rel_widths = c(2, 1)
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Asia1.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+
+###ASIA continued
+plot_ECA <- plot_region_PCWD_ts("ECA")
+plot_ECA <- plot_ECA+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_TIB <- plot_region_PCWD_ts("TIB")
+plot_SAS <- plot_region_PCWD_ts("SAS")
+plot_EAS <- plot_region_PCWD_ts("EAS")
+plot_RFE <- plot_region_PCWD_ts("RFE")
+plot_SEA <- plot_region_PCWD_ts("SEA")
+
+plot_ECA_den <- plot_region_PCWD_density("ECA")
+plot_ECA_den <- plot_ECA_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_TIB_den <- plot_region_PCWD_density("TIB")
+plot_SAS_den <- plot_region_PCWD_density("SAS")
+plot_EAS_den <- plot_region_PCWD_density("EAS")
+plot_RFE_den <- plot_region_PCWD_density("RFE")
+plot_SEA_den <- plot_region_PCWD_density("SEA")
+
+combined2all <- plot_grid(
+  plot_ECA, plot_ECA_den, plot_TIB,plot_TIB_den, plot_SAS,plot_SAS_den, plot_EAS,plot_EAS_den, plot_RFE,plot_RFE_den,plot_SEA,plot_SEA_den,
+  nrow        = 6,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) ASIA - ECA", "g)",
+    "b) ASIA - TIB", "h)",
+    "c) ASIA - SAS", "i)",
+    "d) ASIA - EAS", "j)",
+    "e) ASIA - RFE", "k)",
+    "f) ASIA - SEA", "l)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1 ,      # align text at its top
+  rel_widths = c(2, 1)
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Asia2.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+####CENTRAL AMERICA
+plot_NCA <- plot_region_PCWD_ts("NCA")
+plot_NCA <- plot_NCA+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_SCA <- plot_region_PCWD_ts("SCA")
+plot_CAR <- plot_region_PCWD_ts("CAR")
+
+plot_NCA_den <- plot_region_PCWD_density("NCA")
+plot_NCA_den <- plot_NCA_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_SCA_den <- plot_region_PCWD_density("SCA")
+plot_CAR_den <- plot_region_PCWD_density("CAR")
+
+combined2all <- plot_grid(
+  plot_NCA, plot_NCA_den,plot_SCA,plot_SCA_den, plot_CAR,plot_CAR_den,
+  nrow        = 3,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) CENTRAL AMERICA - NCA", "d)",
+    "b) CENTRAL AMERICA - SCA", "e)",
+    "c) CENTRAL AMERICA - CAR", "f)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+rel_widths = c(2, 1)
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_CentralAmerica.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 11,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+
+###SOUTH AMERICA
+plot_NWS <- plot_region_PCWD_ts("NWS")
+plot_NWS <- plot_NWS+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_NSA <- plot_region_PCWD_ts("NSA")
+plot_NES <- plot_region_PCWD_ts("NES")
+plot_SAM <- plot_region_PCWD_ts("SAM")
+plot_SWS <- plot_region_PCWD_ts("SWS")
+plot_SES <- plot_region_PCWD_ts("SES")
+plot_SSA <- plot_region_PCWD_ts("SSA")
+
+plot_NWS_den <- plot_region_PCWD_density("NWS")
+plot_NWS_den <- plot_NWS_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_NSA_den <- plot_region_PCWD_density("NSA")
+plot_NES_den <- plot_region_PCWD_density("NES")
+plot_SAM_den <- plot_region_PCWD_density("SAM")
+plot_SWS_den <- plot_region_PCWD_density("SWS")
+plot_SES_den <- plot_region_PCWD_density("SES")
+plot_SSA_den <- plot_region_PCWD_density("SSA")
+
+
+combined2all <- plot_grid(
+  plot_NWS,plot_NWS_den, plot_NSA, plot_NSA_den,plot_NES,plot_NES_den,plot_SAM,plot_SAM_den, plot_SWS,plot_SWS_den, plot_SES,plot_SES_den, plot_SSA,plot_SSA_den,
+  nrow        = 7,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) SOUTH AMERICA - NWS", "h)",
+    "b) SOUTH AMERICA - NSA", "i)",
+    "c) SOUTH AMERICA - NES", "j)",
+    "d) SOUTH AMERICA - SAM", "k)",
+    "e) SOUTH AMERICA - SWS", "l)",
+    "f) SOUTH AMERICA - SES", "m)",
+    "g) SOUTH AMERICA - SSA", "n)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1)
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_SouthAmerica.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 17,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+
+###AUSTRALIA
+plot_NAU <- plot_region_PCWD_ts("NAU")
+plot_NAU <- plot_NAU+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_CAU <- plot_region_PCWD_ts("CAU")
+plot_EAU <- plot_region_PCWD_ts("EAU")
+plot_SAU <- plot_region_PCWD_ts("SAU")
+plot_NZ <- plot_region_PCWD_ts("NZ")
+
+plot_NAU_den <- plot_region_PCWD_density("NAU")
+plot_NAU_den <- plot_NAU_den+ theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
+plot_CAU_den <- plot_region_PCWD_density("CAU")
+plot_EAU_den <- plot_region_PCWD_density("EAU")
+plot_SAU_den <- plot_region_PCWD_density("SAU")
+plot_NZ_den <- plot_region_PCWD_density("NZ")
+
+combined2all <- plot_grid(
+  plot_NAU, plot_NAU_den,plot_CAU,plot_CAU_den, plot_EAU, plot_EAU_den,plot_SAU,plot_SAU_den, plot_NZ,plot_NZ_den,
+  nrow        = 5,
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) AUSTRALIA - NAU", "f)",
+    "b) AUSTRALIA - CAU", "g)",
+    "c) AUSTRALIA - EAU", "h)",
+    "d) AUSTRALIA - SAU", "i)",
+    "e) AUSTRALIA - NZ", "j)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.0,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1)
+)
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_all_Australia.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 13,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+```
+
+## Assessing the change in frequency of an ERA5 30-year drought events (Moderate drought) for context
+
+```{r functions for RP calc}
+# From https://geco-bern.github.io/cwd/articles/cwd_example.html: 
+# calculate return period as a function of the CWD extreme. Using the two 
+# coefficients of the fitted distribution as arguments
+calc_return_period <- function(x, loc, scale){
+  1 / (1 - exp(-exp(-(x-loc)/scale)))
+}
+
+extract_loc <- function(mod){
+  loc <- mod$results$par[ "location" ]
+  if (!is.null(loc)){
+    return(loc)
+  } else {
+    return(NA)
+  }
+}
+
+extract_scale <- function(mod){
+  scale <- mod$results$par[ "scale" ]
+  if (!is.null(scale)){
+    return(scale)
+  } else {
+    return(NA)
+  }
+}
+```
+
+
+#### rolling effective RP for all regions
+calculate 30 yr event return periods
+```{r}
+# #################### Calc for ModE-SIm ######################################
+# use_rp <- 30    # return period of interest
+# nyears <- 25   # window size
+# 
+# path <- here::here("data/volc_impact_aggregates/collected_p_pet")
+# folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020 in first set
+# 
+# # Extract unique ensemble member identifiers from folder names
+# n_ens <- unique(basename(folders))[1:20]
+# # Add "_tidy" to each element
+# n_ens <- paste0(n_ens, "_tidy")
+# all_members <- n_ens
+# 
+# # Store output
+# EVA_regional_ensemble <- list()
+# 
+# for (region in names(corrected_full)) {
+# 
+#   # Full matrix for this region
+#   result_array_region <- corrected_full[[region]]  # [590, 20]
+# 
+#   # Determine which ensemble members to include
+#   if (region %in% regions_to_modify) {
+#     ens_cols <- all_members[all_members != "m001_tidy"]
+#   } else {
+#     ens_cols <- all_members
+#   }
+# 
+#   # Baseline: last 30 years, pooled across selected members
+#   result_array_region_BL <- result_array_region[555:580, ens_cols] #changed to have 1975 as reference period
+#   baseline_pooled <- as.vector(result_array_region_BL)
+#   fit_ref <- fevd(baseline_pooled, type = "Gumbel", method = "MLE", units = "years")
+#   cwd_ref <- return.level(fit_ref, return.period = use_rp)
+# 
+#   # Initialize return period vector (pooled across ensemble)
+#   rp_window <- rep(NA, nrow(result_array_region) - nyears + 1)
+# 
+#   for (window_start in 1:(nrow(result_array_region) - nyears + 1)) {
+#     # Pool all selected ensemble members in this window
+#     window_data <- as.vector(result_array_region[window_start:(window_start + nyears - 1), ens_cols])
+# 
+#     # Fit Gumbel distribution to pooled window
+#     fit_window <- fevd(window_data, type = "Gumbel")
+# 
+#     # Calculate return period of baseline event
+#     rp_window[window_start] <- calc_return_period(cwd_ref,
+#                                                   extract_loc(fit_window),
+#                                                   extract_scale(fit_window))
+#   }
+# 
+#   # Time vector
+#   time_info <- seq(from = 1420, to = 2009)
+#   region_df <- data.frame(
+#     time = time_info[12:577],  # adjust to match rolling windows
+#     RP = rp_window,
+#     region = region
+#   )
+# 
+#   EVA_regional_ensemble[[region]] <- region_df
+# }
+# 
+# # Combine all regions
+# combined_results_25yr_pooled <- do.call(rbind, EVA_regional_ensemble)
+# # Save to file
+# write.csv(combined_results_25yr_pooled, file = here::here("data/25yr_pooled_return_periods_regions_ERA_members_test.csv"), row.names = FALSE) #ModESim all ensemble members
+
+```
+
+```{r}
+### test confidence interval estimation for ModE-Sim data also: 
+use_rp <- 30
+nyears <- 25
+path <- here::here("data/volc_impact_aggregates/collected_p_pet")
+folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}")
+n_ens <- unique(basename(folders))[1:20]
+n_ens <- paste0(n_ens, "_tidy")
+all_members <- n_ens
+
+EVA_regional_ensemble <- list()
+
+for (region in names(corrected_full)) {
+  
+  result_array_region <- corrected_full[[region]]  # [590, 20]
+  
+  # Determine which ensemble members to include
+  if (region %in% regions_to_modify) {
+    ens_cols <- all_members[all_members != "m001_tidy"]
+  } else {
+    ens_cols <- all_members
+  }
+  
+  # Baseline: pooled across selected members
+  result_array_region_BL <- result_array_region[555:580, ens_cols] #changed to 1975 - 1999 as reference period
+  baseline_pooled <- as.vector(result_array_region_BL)
+  fit_ref <- fevd(baseline_pooled, type = "Gumbel", method = "MLE", units = "years")
+  cwd_ref <- return.level(fit_ref, return.period = use_rp)
+  
+  n_windows <- nrow(result_array_region) - nyears + 1
+  rp_window <- rep(NA, n_windows)
+  RP_lower  <- rep(NA, n_windows)
+  RP_upper  <- rep(NA, n_windows)
+  
+  for (window_start in 1:n_windows) {
+    
+    # Pool all selected ensemble members in this window
+    window_data <- as.vector(result_array_region[window_start:(window_start + nyears - 1), ens_cols])
+    n_pool      <- length(window_data)  # nyears * n_ensemble_members
+    
+    fit_window <- tryCatch(
+      fevd(window_data, type = "Gumbel", method = "MLE"),
+      error = function(e) NULL
+    )
+    if (is.null(fit_window)) next
+    
+    loc_hat   <- extract_loc(fit_window)
+    scale_hat <- extract_scale(fit_window)
+    
+    # Point estimate
+    rp_window[window_start] <- calc_return_period(cwd_ref, loc_hat, scale_hat)
+    
+    # Parametric bootstrap
+    R       <- 250
+    boot_rp <- numeric(R)
+    
+    for (b in seq_len(R)) {
+      # Draw bootstrap sample of same size as pooled window (nyears * n_members)
+      boot_sample <- revd(n_pool, loc = loc_hat, scale = scale_hat, shape = 0, type = "GEV")
+      
+      fit_boot <- tryCatch(
+        fevd(boot_sample, type = "Gumbel", method = "MLE"),
+        error = function(e) NULL
+      )
+      if (is.null(fit_boot)) { boot_rp[b] <- NA; next }
+      
+      boot_rp[b] <- calc_return_period(cwd_ref, extract_loc(fit_boot), extract_scale(fit_boot))
+    }
+    
+    RP_lower[window_start] <- quantile(boot_rp, 0.025, na.rm = TRUE)
+    RP_upper[window_start] <- min(quantile(boot_rp, 0.975, na.rm = TRUE), 200)
+  }
+  
+  time_info <- seq(from = 1420, to = 2009)
+
+  window_size <- 25
+  half_window <- (window_size - 1) / 2  # 12
+
+  n_out <- length(time_info) - window_size + 1
+
+  region_df <- data.frame(
+    time     = time_info[(1:n_out) + half_window], #midpoints
+    RP       = rp_window,
+    RP_lower = RP_lower,
+    RP_upper = RP_upper,
+    region   = region
+  )
+  
+  EVA_regional_ensemble[[region]] <- region_df
+}
+
+combined_results_25yr_pooled <- do.call(rbind, EVA_regional_ensemble)
+write.csv(combined_results_25yr_pooled, 
+          file = here::here("data/25yr_pooled_return_periods_regions_ERA_members_bootstrap.csv"), 
+          row.names = FALSE)
+
+```
+
+
+
+```{r}
+## test chunk to test different uncertainty sampling
+use_rp <- 30    # return period of two years
+nyears <- 25   # bin width
+
+# Initialize a list to store results for all regions
+EVA_regional <- list()
+
+for (region in names(regional_results_ERA5Land)) {
+  
+  # Extract the result array for the current region
+  result_array_region_BL <- corrected_full[[region]][555:580, ]  # baseline [time, ensemble]
+  result_array_region <- regional_results_ERA5Land[[region]]     # full time series [time, ensemble]
+  
+  # ----- Fit pooled baseline -----
+  baseline_pooled <- as.vector(result_array_region_BL)
+  fit_ref <- fevd(baseline_pooled, type = "Gumbel", method = "MLE", units = "years")
+  cwd_ref <- return.level(fit_ref, return.period = use_rp)
+  
+  # Initialize storage vectors
+  rp_window <- rep(NA, length(result_array_region) - nyears + 1)
+  RP_lower <- rep(NA, length(result_array_region) - nyears + 1)
+  RP_upper <- rep(NA, length(result_array_region) - nyears + 1)
+  
+  for (window_start in 1:(length(result_array_region) - nyears + 1)) {
+  
+    window_data <- result_array_region[window_start:(window_start + nyears - 1)]
+    window_data <- as.vector(window_data)
+    fit_window  <- fevd(window_data, type = "Gumbel", method = "MLE")
+    
+    loc_hat   <- extract_loc(fit_window)
+    scale_hat <- extract_scale(fit_window)
+    
+    # Point estimate
+    rp_window[window_start] <- calc_return_period(cwd_ref, loc_hat, scale_hat)
+    
+    # --- Parametric bootstrap over the WINDOW fit ---
+    # Sample new parameter sets from the fitted Gumbel, then ask:
+    # "what is the return period of cwd_ref under each bootstrap replicate?"
+    R <- 250
+    boot_rp <- numeric(R)
+    
+    n_pool <- length(window_data)   # same sample size as the original window
+    
+    for (b in seq_len(R)) {
+      # Draw a bootstrap sample from the fitted Gumbel
+      boot_sample <- revd(n_pool, loc = loc_hat, scale = scale_hat, shape = 0, type = "GEV")
+      
+      # Refit Gumbel to bootstrap sample
+      fit_boot <- tryCatch(
+        fevd(boot_sample, type = "Gumbel", method = "MLE"),
+        error = function(e) NULL
+      )
+      if (is.null(fit_boot)) {
+        boot_rp[b] <- NA
+        next
+      }
+      
+      # Compute return period of the FIXED baseline event under this bootstrap fit
+      boot_rp[b] <- calc_return_period(
+        cwd_ref,
+        extract_loc(fit_boot),
+        extract_scale(fit_boot)
+      )
+    }
+    
+    # 95% CI from bootstrap distribution
+    RP_lower[window_start] <- quantile(boot_rp, 0.025, na.rm = TRUE)
+    RP_upper[window_start] <- min(quantile(boot_rp, 0.975, na.rm = TRUE), 200) #set upper limit of return period
+  }
+  
+    # Time vector (match rolling windows)
+  time_info <- seq(from = 1970, to = 2024)
+  window_size <- 25
+  half_window <- (window_size - 1) / 2  # 12
+
+  n_out <- length(time_info) - window_size + 1
+  region_df <- data.frame(
+    time = time_info[(1:n_out) + half_window],
+    RP = rp_window,
+    RP_lower = RP_lower,
+    RP_upper = RP_upper,
+    region = region
+  )
+  
+  EVA_regional[[region]] <- region_df
+}
+
+# Combine all regions into one dataframe
+combined_results_25yr_ERA <- do.call(rbind, EVA_regional)
+
+# Save or process the combined dataframe
+# Example: Save to a CSV file
+write.csv(combined_results_25yr_ERA, here::here("data/25yr_pooled_return_periods_regions_ERA5Land_bootstrap.csv"), row.names = FALSE)
+
+
+```
+
+
+```{r}
+# # Test with one window before running everything
+# some_window_data <- as.vector(regional_results_ERA5Land$WNA[21:50])
+# test_fit <- fevd(some_window_data, type = "Gumbel", method = "MLE")
+# ci_100  <- ci(test_fit, type = "return.level", return.period = 30, method = "boot", R = 100)
+# ci_250  <- ci(test_fit, type = "return.level", return.period = 30, method = "boot", R = 250)
+# ci_500  <- ci(test_fit, type = "return.level", return.period = 30, method = "boot", R = 500)
+# ci_1000 <- ci(test_fit, type = "return.level", return.period = 30, method = "boot", R = 1000)
+# print(rbind(ci_100,ci_250, ci_500, ci_1000))
+```
+
+
+
+test: 
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Filter for region MED
+med_data <- combined_results_25yr_ERA %>% 
+  filter(region == "MED")
+
+# Plot
+ggplot(med_data, aes(x = time, y = RP)) +
+  geom_line(color = "blue", linewidth = 1) +                        # main RP line
+  geom_ribbon(aes(ymin = RP_lower, ymax = RP_upper),           # uncertainty band
+              fill = "lightblue", alpha = 0.3) +
+  labs(
+    title = "Rolling 30-Year Return Period for MED",
+    x = "Year",
+    y = "Return Period (years)"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+```{r}
+#### ModE-Sim test plot: 
+
+# Filter for region MED
+med_data <- combined_results_25yr_pooled %>% 
+  filter(region == "MED")
+
+# Plot
+ggplot(med_data, aes(x = time, y = RP)) +
+  geom_line(color = "blue", linewidth = 1) +                        # main RP line
+  geom_ribbon(aes(ymin = RP_lower, ymax = RP_upper),           # uncertainty band
+              fill = "lightblue", alpha = 0.3) +
+  labs(
+    title = "Rolling 25-Year Return Period for MED - ModE-Sim",
+    x = "Year",
+    y = "Return Period (years)"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+### Frequency changes of 30-yr return period events for all IPCC regions (1420 - 2009 epoch):
+
+```{r timeseries and map plots for each region, echo=FALSE, warning=FALSE, message=FALSE}
+#plot all ensemble members and ensemble mean: 
+combined_df <- read.csv(here::here("data/25yr_pooled_return_periods_regions_ERA_members_bootstrap.csv")) #ModESim all ensemble members
+combined_era <- read.csv(here::here("data/25yr_pooled_return_periods_regions_ERA5Land_bootstrap.csv"))
+
+
+####################################### EUROPE #####################################
+##### Step 2: Filter European regions for the map and timeseries
+# Filter regions for Europe
+selected_continent <- "Europe"
+sel_regions <- continent_mapping[[selected_continent]]
+sel_regions <- "MED"
+
+# Filter combined data for timeseries 
+combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) 
+# %>%
+  # summarise(
+  #   RP_mean = mean(RP, na.rm = TRUE),
+  #   RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+  #   RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+  #   .groups = "drop"
+  # )
+
+ggplot() +
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_df_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  # Ensemble mean line with legend
+  geom_line(data = combined_df_sel, aes(x = time, y = RP, color = "ModE-Sim* (1420-2009)"), linewidth = 1) +
+  # ERA5 line with legend
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
+  # Reference line (no legend)
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
+  # Labels and theme
+  labs(
+    x = "Year",
+    y = "Effective Return Period",
+    title = "Frequency Change of 30-Year Events",
+    color = "Line",  # Legend titles
+    fill = "Shading"
+  ) +
+  scale_color_manual(values = c("ModE-Sim* (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 18),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 18),
+    axis.text.y = element_text(size = 18), 
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12),
+    strip.background = element_rect(fill = "#F5B0CB")
+  ) +
+  facet_wrap(~region, scales = "free_y")
+
+
+######################################ASIA#######################################
+##### Step 2: Filter Asian regions for the map and timeseries
+# Filter regions for Asian
+selected_continent <- "Asia"
+sel_regions <- continent_mapping[[selected_continent]]
+sel_regions <- "ARP"
+
+# Filter combined data for timeseries 
+combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+#     RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+
+ggplot() +
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_df_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  # Ensemble mean line with legend
+  geom_line(data = combined_df_sel, aes(x = time, y = RP, color = "ModE-Sim* (1420-2009)"), linewidth = 1) +
+  # ERA5 line with legend
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
+  # Reference line (no legend)
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
+  # Labels and theme
+  labs(
+    x = "Year",
+    y = "Effective Return Period",
+    title = "Frequency Change of 30-Year Events",
+    color = "Line",  # Legend titles
+    fill = "Shading"
+  ) +
+  scale_color_manual(values = c("ModE-Sim* (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 18),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 18),
+    axis.text.y = element_text(size = 18), 
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12),
+    strip.background = element_rect(fill = "#E5973B"),
+  ) +
+  facet_wrap(~region, scales = "free_y")
+
+
+###################################### Australia #######################################
+##### Step 2: Filter Australian regions for the map and timeseries
+# Filter regions for Australia
+selected_continent <- "Australia"
+sel_regions <- continent_mapping[[selected_continent]]
+sel_regions <- "CAU"
+
+# Filter combined data for timeseries 
+combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+#     RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+
+ggplot() +
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_df_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  # Ensemble mean line with legend
+  geom_line(data = combined_df_sel, aes(x = time, y = RP, color = "ModE-Sim* (1420-2009)"), linewidth = 1) +
+  # ERA5 line with legend
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
+  # Reference line (no legend)
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
+  # Labels and theme
+  labs(
+    x = "Year",
+    y = "Effective Return Period",
+    title = "Frequency Change of 30-Year Events",
+    color = "Line",  # Legend titles
+    fill = "Shading"
+  ) +
+  scale_color_manual(values = c("ModE-Sim* (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14, color = "white"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 18),
+    axis.text.y = element_text(size = 18), 
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12),
+    strip.background = element_rect(fill = "#3C3980")
+  ) +
+  facet_wrap(~region, scales = "free_y")
+
+# ###################################### AFRICA #######################################
+# ##### Step 2: Filter African regions for the map and timeseries
+# # Filter regions for Africa
+# selected_continent <- "Africa"
+# sel_regions <- continent_mapping[[selected_continent]]
+# #sel_regions <- "NEAF"
+# 
+# # Filter combined data for timeseries 
+# combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+# combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+#     RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+# 
+# ggplot() +
+#   # Uncertainty band with legend
+#   geom_ribbon(data = ensemble_band_df, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range (5th-95th)"),alpha = 0.4) +
+#   # Ensemble mean line with legend
+#   geom_line(data = ensemble_band_df, aes(x = time, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+#   # ERA5 line with legend
+#   geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
+#   # Reference line (no legend)
+#   geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+#   # Labels and theme
+#   labs(
+#     x = "Year",
+#     y = "Effective Return Period",
+#     title = "Frequency Change of 5-Year Events",
+#     color = "Line",  # Legend titles
+#     fill = "Shading"
+#   ) +
+#   scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+#   scale_fill_manual(values = c("ModE-Sim Ensemble Range (5th-95th)" = "grey70")) +
+#   theme_classic() +
+#   theme(
+#     legend.position = "none",
+#     plot.title = element_text(hjust = 0.5, face = "bold"),
+#     strip.text = element_text(size = 18),
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 18),
+#     axis.text.y = element_text(size = 18), 
+#     axis.title.x = element_text(size = 18),
+#     axis.title.y = element_text(size = 18),
+#     legend.title = element_text(size = 14),
+#     legend.text = element_text(size = 12),
+#     strip.background = element_rect(fill = "#91C7B1"),
+#   ) +
+#   facet_wrap(~region, scales = "free_y")
+
+
+###################################### N AMERICA #######################################
+##### Step 2: Filter N AMERICA regions for the map and timeseries
+# Filter regions for N America
+selected_continent <- "North America"
+sel_regions <- continent_mapping[[selected_continent]]
+sel_regions <- "WNA"
+
+# Filter combined data for timeseries 
+combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+#     RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+
+ggplot() +
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_df_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  # Ensemble mean line with legend
+  geom_line(data = combined_df_sel, aes(x = time, y = RP, color = "ModE-Sim* (1420-2009)"), linewidth = 1) +
+  # ERA5 line with legend
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
+  # Reference line (no legend)
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
+  # Labels and theme
+  labs(
+    x = "Year",
+    y = "Effective Return Period",
+    title = "Frequency Change of 30-Year Events",
+    color = "Line",  # Legend titles
+    fill = "Shading"
+  ) +
+  scale_color_manual(values = c("ModE-Sim* (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(size = 14, color= "white"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 18),
+    axis.text.y = element_text(size = 18), 
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12),
+    strip.background = element_rect(fill = "#236A3F"),
+  ) +
+  facet_wrap(~region, scales = "free_y")
+
+# ###################################### C AMERICA #######################################
+# ##### Step 2: Filter C AMERICA regions for the map and timeseries
+# # Filter regions for C America
+# selected_continent <- "Central America"
+# sel_regions <- continent_mapping[[selected_continent]]
+# #sel_regions <- "NCA"
+# 
+# # Filter combined data for timeseries 
+# combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+# combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+#     RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+# 
+# ggplot() +
+#   # Uncertainty band with legend
+#   geom_ribbon(data = ensemble_band_df, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range (5th-95th)"),alpha = 0.4) +
+#   # Ensemble mean line with legend
+#   geom_line(data = ensemble_band_df, aes(x = time, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+#   # ERA5 line with legend
+#   geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
+#   # Reference line (no legend)
+#   geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+#   # Labels and theme
+#   labs(
+#     x = "Year",
+#     y = "Effective Return Period",
+#     title = "Frequency Change of 5-Year Events",
+#     color = "Line",  # Legend titles
+#     fill = "Shading"
+#   ) +
+#   scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+#   scale_fill_manual(values = c("ModE-Sim Ensemble Range (5th-95th)" = "grey70")) +
+#   theme_classic() +
+#   theme(
+#     legend.position = "none",
+#     plot.title = element_text(hjust = 0.5, face = "bold"),
+#     strip.text = element_text(size = 18),
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 18),
+#     axis.text.y = element_text(size = 18), 
+#     axis.title.x = element_text(size = 18),
+#     axis.title.y = element_text(size = 18),
+#     legend.title = element_text(size = 14),
+#     legend.text = element_text(size = 12),
+#     strip.background = element_rect(fill = "#B33951")
+#   ) +
+#   facet_wrap(~region, scales = "free_y")
+# 
+# 
+
+
+
+# ###################################### S AMERICA #######################################
+# ##### Step 2: Filter S AMERICA regions for the map and timeseries
+# # Filter regions for S America
+# selected_continent <- "South America"
+# sel_regions <- continent_mapping[[selected_continent]]
+# #sel_regions <- "NWS"
+# 
+# # Filter combined data for timeseries 
+# combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+# combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.05, na.rm = TRUE),
+#     RP_upper = quantile(RP, 0.95, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+# 
+# ggplot() +
+#   # Uncertainty band with legend
+#   geom_ribbon(data = ensemble_band_df, aes(x = time, ymin = RP_lower, ymax = RP_upper, fill = "ModE-Sim Ensemble Range (5th-95th)"),alpha = 0.4) +
+#   # Ensemble mean line with legend
+#   geom_line(data = ensemble_band_df, aes(x = time, y = RP_mean, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+#   # ERA5 line with legend
+#   geom_line(data = combined_era_sel, aes(x = time, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
+#   # Reference line (no legend)
+#   geom_hline(yintercept = 5, linetype = "dashed", color = "grey40") +
+#   # Labels and theme
+#   labs(
+#     x = "Year",
+#     y = "Effective Return Period (log10)",
+#     title = "Frequency Change of 5-Year Events",
+#     color = "Line",  # Legend titles
+#     fill = "Shading"
+#   ) +
+#   scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+#   scale_fill_manual(values = c("ModE-Sim Ensemble Range (5th-95th)" = "grey70")) +
+#   theme_classic() +
+#   theme(
+#     legend.position = "none",
+#     plot.title = element_text(hjust = 0.5, face = "bold"),
+#     strip.text = element_text(size = 18),
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 18),
+#     axis.text.y = element_text(size = 18), 
+#     axis.title.x = element_text(size = 18),
+#     axis.title.y = element_text(size = 18),
+#     legend.title = element_text(size = 14),
+#     legend.text = element_text(size = 12),
+#     strip.background = element_rect(fill = "#E3D081")
+#   ) +
+#   facet_wrap(~region, scales = "free_y")
+
+
+```
+
+time warped plots: 
+
+```{r}
+# Warp function: compress early years, stretch recent years
+warp_time <- function(year) {
+  ifelse(year < 1950, year * 0.5, 975 + (year - 1950) * 2)
+}
+
+
+#plot all ensemble members and ensemble mean: 
+combined_df <- read.csv(here::here("data/25yr_pooled_return_periods_regions_ERA_members_bootstrap.csv"))
+combined_era <- read.csv(here::here("data/25yr_pooled_return_periods_regions_ERA5Land_bootstrap.csv"))
+
+####################################### EUROPE #####################################
+##### Step 2: Filter European regions for the map and timeseries
+# Filter regions for Europe
+selected_continent <- "Europe"
+sel_regions <- continent_mapping[[selected_continent]]
+sel_regions <- "MED"
+
+# Filter combined data for timeseries 
+combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+#     RP_upper = quantile(RP, 1, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+
+# Apply to both datasets
+combined_df_sel$time_warped <- warp_time(combined_df_sel$time)
+combined_era_sel$time_warped <- warp_time(combined_era_sel$time)
+
+# 3. Define range for highlight box
+highlight_xmin <- warp_time(1950)
+highlight_xmax <- warp_time(2010)
+
+
+rollingRP_MED <- ggplot() +
+  # Highlight box for stretched area
+# geom_rect(aes(xmin = highlight_xmin, xmax = highlight_xmax, ymin = 0.8, ymax = 110),
+#           fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
+  geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
+  geom_ribbon(data = combined_df_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
+  geom_line(data = combined_df_sel, aes(x = time_warped, y = RP,
+                                         color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  geom_ribbon(data = combined_era_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
+  geom_line(data = combined_era_sel, aes(x = time_warped, y = RP,
+                                         color = "ERA5 (1970-2024)"), linewidth = 1) +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
+  
+  # Custom x-axis ticks: use original years as labels
+  scale_x_continuous(
+    breaks = warp_time(c( 1500, 1600, 1700, 1800, 1900, 1950, 1970, 1990, 2010)),
+    labels = c( "1500", "1600", "1700", "1800", "1900", "1950", "1970", "1990", "2010"),
+    name = ""
+  ) +
+  scale_y_log10(name = expression("Effective Return Period"),
+        breaks = c(1, 2, 5, 10, 20, 50, 100, 150),
+  labels = c("1", "2", "5", "10", "20", "50", "100", "150")) +  # Log scale for y-axis
+  scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
+  labs(title = "", color = "Line", fill = "Shading") +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    text = element_text(size=13),
+    strip.background = element_rect(fill = scales::alpha("#F5B0CB", 0.6)),
+    axis.title = element_text(size=12)
+  ) +
+  facet_wrap(~region, scales = "free_y")+
+  annotation_logticks()
+
+########################################
+selected_continent <- "Asia"
+sel_regions <- continent_mapping[[selected_continent]]
+sel_regions <- "ARP"
+
+# Filter combined data for timeseries 
+combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+#     RP_upper = quantile(RP, 1, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+
+# Apply to both datasets
+combined_df_sel$time_warped <- warp_time(combined_df_sel$time)
+combined_era_sel$time_warped <- warp_time(combined_era_sel$time)
+
+# 3. Define range for highlight box
+highlight_xmin <- warp_time(1950)
+highlight_xmax <- warp_time(2010)
+
+rollingRP_ARP <- ggplot() +
+  # Highlight box for stretched area
+  # geom_rect(aes(xmin = highlight_xmin, xmax = highlight_xmax, ymin = 1, ymax = 40),
+  #         fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
+  geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_df_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  # Ensemble mean line with legend
+  geom_line(data = combined_df_sel, aes(x = time_warped, y = RP, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  geom_ribbon(data = combined_era_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
+  # ERA5 line with legend
+  geom_line(data = combined_era_sel, aes(x = time_warped, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
+  # Reference line (no legend)
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
+    # Custom x-axis ticks: use original years as labels
+  scale_x_continuous(
+    breaks = warp_time(c( 1500, 1600, 1700, 1800, 1900, 1950, 1970, 1990, 2010)),
+    labels = c("1500", "1600", "1700", "1800", "1900", "1950", "1970", "1990", "2010"),
+    name = "Year"
+  ) +
+  scale_y_log10(name = expression("Effective Return Period"),
+        breaks = c(2, 5, 10, 20, 30, 50, 70),
+  labels = c( "2", "5", "10", "20", "30", "50", "70")) +  # Log scale for y-axis
+  # Labels and theme
+  labs(
+    title = "",
+    color = "Line",  # Legend titles
+    fill = "Shading"
+  ) +
+  scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    text = element_text(size=13),
+    strip.background = element_rect(fill =  scales::alpha("#E5973B", 0.6)),
+    axis.title = element_text(size=12)
+  ) +
+  facet_wrap(~region, scales = "free_y")+
+  annotation_logticks()
+
+
+###################################### Australia #######################################
+##### Step 2: Filter Australian regions for the map and timeseries
+# Filter regions for Australia
+selected_continent <- "Australia"
+sel_regions <- continent_mapping[[selected_continent]]
+sel_regions <- "CAU"
+
+# Filter combined data for timeseries 
+combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+#     RP_upper = quantile(RP, 1, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+
+# Apply to both datasets
+combined_df_sel$time_warped <- warp_time(combined_df_sel$time)
+combined_era_sel$time_warped <- warp_time(combined_era_sel$time)
+
+# 3. Define range for highlight box
+highlight_xmin <- warp_time(1950)
+highlight_xmax <- warp_time(2010)
+
+rollingRP_CAU <-ggplot() +
+  # Highlight box for stretched area
+  # geom_rect(aes(xmin = highlight_xmin, xmax = highlight_xmax, ymin = 1.8, ymax = 110),
+  #         fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
+  geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_df_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  # Ensemble mean line with legend
+  geom_line(data = combined_df_sel, aes(x = time_warped, y = RP, color = "ModE-Sim Mean (1420-2009)"), linewidth = 1) +
+  # ERA5 line with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
+  geom_line(data = combined_era_sel, aes(x = time_warped, y = RP, color = "ERA5 (1970-2024)"), linewidth = 1) +
+  # Reference line (no legend)
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
+  scale_x_continuous(
+    breaks = warp_time(c(1500, 1600, 1700, 1800, 1900, 1950, 1970, 1990, 2010)),
+    labels = c("1500", "1600", "1700", "1800", "1900", "1950", "1970", "1990", "2010"),
+    name = "Year"
+  ) +
+  scale_y_log10(name = expression(""),
+        breaks = c(2, 5, 10, 20, 50, 100, 150),
+  labels = c("2", "5", "10", "20", "50", "100", "150")) +  # Log scale for y-axis
+  # Labels and theme
+  labs(
+    title = "",
+    color = "Line",  # Legend titles
+    fill = "Shading"
+  ) +
+  scale_color_manual(values = c("ModE-Sim Mean (1420-2009)" = "black", "ERA5 (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(color = "white"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    text = element_text(size=13),
+    strip.background = element_rect(fill =  scales::alpha("#3C3980", 0.6)),
+    axis.title = element_text(size=12)
+  ) +
+  facet_wrap(~region, scales = "free_y")+
+    annotation_logticks()
+
+
+###################################### N AMERICA #######################################
+##### Step 2: Filter N AMERICA regions for the map and timeseries
+# Filter regions for N America
+selected_continent <- "North America"
+sel_regions <- continent_mapping[[selected_continent]]
+sel_regions <- "WNA"
+
+# Filter combined data for timeseries 
+combined_df_sel <- combined_df %>% filter(region %in% sel_regions)
+combined_era_sel <- combined_era %>% filter(region %in% sel_regions)
+# # Compute ensemble mean
+# ensemble_mean_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(RP_mean = mean(RP, na.rm = TRUE), .groups = "drop")
+# 
+# ensemble_band_df <- combined_df_sel %>%
+#   group_by(region, time) %>%
+#   summarise(
+#     RP_mean = mean(RP, na.rm = TRUE),
+#     RP_lower = quantile(RP, 0.0, na.rm = TRUE),
+#     RP_upper = quantile(RP, 1, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+# Apply to both datasets
+combined_df_sel$time_warped <- warp_time(combined_df_sel$time)
+combined_era_sel$time_warped <- warp_time(combined_era_sel$time)
+
+# 3. Define range for highlight box
+highlight_xmin <- warp_time(1950)
+highlight_xmax <- warp_time(2010)
+
+rollingRP_WNA <-ggplot() +
+  # Highlight box for stretched area
+  # geom_rect(aes(xmin = highlight_xmin, xmax = highlight_xmax, ymin = 2, ymax = 30),
+  #         fill = "white", color = "black", linetype = "solid", alpha = 0.6)+
+  geom_vline(xintercept = highlight_xmin, color = "black", linewidth=0.5, linetype= 1)+
+  # Uncertainty band with legend
+  geom_ribbon(data = combined_df_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper, fill = "95% CI"),alpha = 0.4) +
+  # Ensemble mean line with legend
+  geom_line(data = combined_df_sel, aes(x = time_warped, y = RP, color = "ModE-Sim Mean\n(1420-2009)"), linewidth = 1) +
+  # ERA5 line with legend
+  geom_ribbon(data = combined_era_sel, aes(x = time_warped, ymin = RP_lower, ymax = RP_upper,
+                                           fill = "95% CI"), alpha = 0.4) +
+  geom_line(data = combined_era_sel, aes(x = time_warped, y = RP, color = "ERA5-Land (1970-2024)"), linewidth = 1) +
+  # Reference line (no legend)
+  geom_hline(yintercept = 30, linetype = "dashed", color = "grey40") +
+  scale_x_continuous(
+    breaks = warp_time(c(1500, 1600, 1700, 1800, 1900, 1950, 1970, 1990, 2010)),
+    labels = c("1500", "1600", "1700", "1800", "1900", "1950", "1970", "1990", "2010"),
+    name = ""
+  ) +
+  scale_y_log10(name = expression(""),
+        breaks = c(2, 5, 10, 20, 30, 50, 70),
+  labels = c("2", "5", "10", "20", "30", "50", "70")) +  # Log scale for y-axis
+  # Labels and theme
+  labs(
+    title = "",
+    color = "Line",  # Legend titles
+    fill = "Shading"
+  ) +
+  scale_color_manual(values = c("ModE-Sim Mean\n(1420-2009)" = "black", "ERA5-Land (1970-2024)" = "#B3001B")) +
+  scale_fill_manual(values = c("95% CI" = "grey70")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(color= "white"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    text = element_text(size=13),
+    strip.background = element_rect(fill =  scales::alpha("#236A3F", 0.6)),
+    axis.title = element_text(size=12),
+    legend.title = element_text(face = "bold")
+  ) +
+  facet_wrap(~region, scales = "free_y")+
+    annotation_logticks()
+
+rollingRP_MED 
+rollingRP_ARP
+rollingRP_CAU 
+rollingRP_WNA
+
+
+#### combine plots in grid and save
+rollingRP_MED2 <- rollingRP_MED + theme(plot.margin = margin(t = 10, r = 10, b = 5, l = 5))
+rollingRP_ARP2 <- rollingRP_ARP + theme(plot.margin = margin(t = 0, r = 10, b = 5, l = 5))
+rollingRP_CAU2 <- rollingRP_CAU + theme(plot.margin = margin(t = 0, r = 10, b = 5, l = 5))
+rollingRP_WNA2 <- rollingRP_WNA + theme(plot.margin = margin(t = 10, r = 10, b = 5, l = 5))
+
+
+combined_rollingRP <- plot_grid(
+  rollingRP_MED2, rollingRP_WNA2,
+  rollingRP_ARP2, rollingRP_CAU2,
+  ncol = 2,
+  nrow = 2,
+  rel_widths = c(1, 1),
+  align = "h",
+  axis = "tblr",
+  labels = c(
+    "a)",  "b) ", "c)", "d)"
+  ),
+  label_size = 14,
+  label_x = 0.09,
+  hjust = 0,
+  label_y = 0.95,
+  vjust = 1
+)
+
+print(combined_rollingRP)
+
+# ggsave(
+#   filename = here::here("figures/rollingRP.pdf"),
+#   plot     = combined_rollingRP,
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 10,           # in inches
+#   height   = 6.5,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
+
+# ggsave(
+#   filename = here::here("figures/rollingRP_legend.pdf"),
+#   plot     = rollingRP_WNA,
+#   device   = cairo_pdf,    # better text rendering
+#   width    = 10,           # in inches
+#   height   = 6.5,            # in inches
+#   units    = "in",
+#   dpi      = 300,          # for raster elements (if any)
+#   bg       = "white"       # white background
+# )
+
+```
+
+##### DO THIS ANALYSIS FOR THE SAME PERIODS AS FOR THE INTENSITY 
+
+How many regions experience a doubling in return period (below every 15) in the period 2000 - 2024? 
+
+```{r}
+## remove SAH from quantitative results
+combined_era <- combined_era %>% filter(region != "SAH")
+
+regions_with_high_RP <- combined_era %>%
+  filter(time >= 2000, time <= 2024, RP <= 15) %>%
+  distinct(region)
+
+regions_with_high_RP
+
+combined_era %>%
+  filter(time >= 2000, time <= 2024, RP <= 15) %>%
+  distinct(region) %>%
+  count()
+```
+
+How many regions lie outside the range of return periods covered in the last 600 years? 
+```{r}
+## remove Sahara: 
+combined_df <- combined_df %>% filter(region != "SAH")
+
+# 1. Get reference ranges (1434–1999) for each region
+ref_range_short <- combined_df %>%
+  filter(time >= 1975, time <= 1999) %>%
+  group_by(region) %>%
+  summarise(ref_min = min(RP, na.rm = TRUE),
+            ref_max = max(RP, na.rm = TRUE),
+            .groups = "drop")
+  
+ref_range_medium <- combined_df %>%
+  filter(time >= 1850, time <= 1999) %>%
+  group_by(region) %>%
+  summarise(ref_min = min(RP, na.rm = TRUE),
+            ref_max = max(RP, na.rm = TRUE),
+            .groups = "drop")
+  
+ref_range_long <- combined_df %>%
+  filter(time <= 1999) %>%
+  group_by(region) %>%
+  summarise(ref_min = min(RP, na.rm = TRUE),
+            ref_max = max(RP, na.rm = TRUE),
+            .groups = "drop")
+
+# 2. Compare modern period (2000–2024) to reference range
+modern_outside_short <- combined_era %>%
+  filter(time >= 2000, time <= 2024) %>%
+  left_join(ref_range_short, by = "region") %>%
+  filter(RP < ref_min) %>%
+  distinct(region)
+
+modern_outside_medium <- combined_era %>%
+  filter(time >= 2000, time <= 2024) %>%
+  left_join(ref_range_medium, by = "region") %>%
+  filter(RP < ref_min) %>%
+  distinct(region)
+
+modern_outside_long <- combined_era %>%
+  filter(time >= 2000, time <= 2024) %>%
+  left_join(ref_range_long, by = "region") %>%
+  filter(RP < ref_min) %>%
+  distinct(region)
+
+# 3. Count how many regions
+n_regions_outside_short <- nrow(modern_outside_short)
+n_regions_outside_medium <- nrow(modern_outside_medium)
+n_regions_outside_long <- nrow(modern_outside_long)
+
+print(paste0("Short context: have ", n_regions_outside_short, " regions outside the ref (1975-1999)."))
+print(paste0("Medium context: have ", n_regions_outside_medium, " regions outside the ref (1850-1999)."))
+print(paste0("Long context: have ", n_regions_outside_long, " regions outside the ref (1420-1999)."))
+
+modern_outside_long
+```
+
+##### CREATE MAP SHOWING WHERE FREQUENCY IS OUTSIDE OF REFERENCE BEST ESTIMATE
+
+Plot which regions are unprecedented and which record shattering
+
+```{r}
+# Load reference regions and coastlines:
+load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
+refregions_sf <- st_as_sf(IPCC_WGI_reference_regions_v4)
+refregions_sf <- refregions_sf %>% rename(region = Acronym)
+temp.dir <- tempdir()
+unzip(here::here("data/Reference_regions/ne_110m_coastline.zip"), exdir = temp.dir)
+coastLines <- st_read(dsn = temp.dir, layer = "ne_110m_coastline")
+
+# Load land data for filling continents
+land <- ne_countries(scale = "medium", returnclass = "sf")
+
+# colors_map <- c("exceeding long term\nreference (1420-1999)" = "#D46273",
+#                 "within long term\nreference (1420-1999)"  = "#301934")
+
+# 1. Background Fill Colors
+colors_map <- c(
+  "exceeding multicentennial\nreference (1420-1999)" = "#D46273",  # Your original pink
+  "within multicentennial\nreference (1420-1999)"  = "#9A8C98"   # Muted, sophisticated lavender-gray
+)
+
+# Get the unique regions that actually appear in your data
+valid_regions <- unique(combined_df$region)
+
+# 1. Temporarily turn off the spherical geometry engine
+sf_use_s2(FALSE)
+
+# Identify regions that meet your high-frequency threshold (RP <= 15) in 2000-2024
+high_frequency_regions <- combined_era %>%
+  filter(time >= 2000, time <= 2024, RP <= 15) %>%
+  distinct(region) %>%
+  pull(region)
+
+# 2. Update region_cats
+region_cats <- refregions_sf %>%
+  st_drop_geometry() %>%
+  dplyr::select(region) %>%
+  filter(region %in% valid_regions) %>%
+  mutate(color_cat = ifelse(
+    region %in% modern_outside_long$region,
+    "exceeding multicentennial\nreference (1420-1999)",
+    "within multicentennial\nreference (1420-1999)"
+  ))
+
+shown_sf <- refregions_sf %>%
+  inner_join(region_cats, by = "region")
+
+stipple_regions <- shown_sf %>% 
+  filter(region %in% high_frequency_regions)
+
+# 2. GENERATE THE HATCHING LINES NATIVELY
+# Get the bounding box of your regions to know where to draw lines
+bbox <- st_bbox(stipple_regions)
+
+# Increase line spacing slightly from 'by = 2' to 'by = 3' 
+# This prevents the hatching from looking like a solid block of color on smaller regions
+seq_x <- seq(bbox["xmin"] - 50, bbox["xmax"] + 50, by = 3) 
+
+lines_list <- lapply(seq_x, function(x) {
+  st_linestring(matrix(c(x, bbox["ymin"] - 10, x + 100, bbox["ymax"] + 90), ncol = 2, byrow = TRUE))
+})
+hatch_grid <- st_sfc(lines_list, crs = st_crs(stipple_regions)) %>% st_as_sf()
+hatch_lines <- st_intersection(hatch_grid, st_union(stipple_regions))
+
+# Centroids for labels
+pts <- shown_sf %>%
+  st_centroid() %>%
+  mutate(label = region)
+
+# Build the map
+map_RP <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  
+  # 2. IPCC Regions layer (Fills and borders)
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),
+    color = "grey20",
+    size = 0.3,
+    alpha = 0.6,
+    show.legend = TRUE # Ensures it uses the standard fill guide
+  ) +
+  
+  # 3. THE NATIVE HATCHING OVERLAY
+  geom_sf(
+    data = hatch_lines,
+    # NOTE: Cleaned up string here to perfectly match scale_color_manual below
+    aes(color = "Doubling Frequency\n(RP ≤ 15)"), 
+    size = 0.25,           # Finer lines look more professional
+    alpha = 0.5,           # Subtle alpha lets text and background shine through
+    # FIX 1: Set the key glyph type natively right here!
+    key_glyph = "path"
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour = "#111111"
+  ) +
+  
+# 4. SCALE STYLING
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Return Period category",
+    # Clears lines out of the color boxes safely
+    guide    = guide_legend(override.aes = list(linetype = 0, shape = NA)) 
+  ) +
+  
+  scale_color_manual(
+    values = c("Doubling Frequency\n(RP ≤ 15)" = "#222222"), 
+    name   = "", # Cleaned up: No breaking guide override here!,
+    # FIX: Forces the line's legend key box background to be transparent
+    guide  = guide_legend(override.aes = list(fill = NA))
+  ) +
+  
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  theme_void() +
+  theme(
+    plot.margin          = margin(0, 0, 0, 0),
+    legend.position      = c(0.01, 0.01),
+    legend.justification = c("left", "bottom"),
+    legend.background    = element_blank(),
+    legend.title         = element_text(face = "bold"),
+    legend.box           = "vertical" # Places the color legend cleanly beneath/above the fill legend
+  )
+
+map_RP
+```
+
+ 
+Combine Rolling RP plots and map into one
+```{r}
+# Step 2: stack the panel grid on top of the map
+final_plot <- plot_grid(
+  combined_rollingRP,
+  map_RP,
+  ncol = 1,
+  labels = c("", "e)"),      # leave panels labelled as-is, add e) to map
+  label_size = 14,
+  label_x = 0.01,
+  hjust = 0,
+  rel_heights = c(2, 1)      # panels take 2/3, map takes 1/3 — adjust to taste
+)
+
+final_plot
+
+ggsave(
+  filename = here::here("figures/RP_rolling_map.pdf"),
+  plot     = final_plot,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 9,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
+
+
+#### Scatterplots for modern times:
+first 3: 
+1st plot: reference/overlap period *30 yr* events in mm for ERA5 and ModE-Sim: 1970-2009 (exclude problematic 60s of ERA5) 
+2nd: y-axis: ERA5_Land 1995-2024 30 yr vs x-axis: ERA5 Land 1970-1999
+3rd: y-axis: ERA5-Land 1995-2024 30 yr vs x-axis: ModE-SIm BC 1970-1999
+
+```{r}
+#corrected_full <- readRDS(here::here("data/regionalResults_ModESim_bc.RData"))
+
+##calculate return level of 5 year events - 30 year chunks for consistency: 
+#remove SAH due to unphysically large PCWD values - runaway PCWD 
+regional_results_ERA5Land_eva <- regional_results_ERA5Land[ names(regional_results_ERA5Land) != "SAH" ]
+
+use_rp <- 30   # return period of two years
+
+# Modern ERA5-Land (1994-2024) for each region: 
+# Initialize a list to store results for all regions
+RL_ERA_modern <- list() #save modern 5yr events (in mm) for each region
+
+# Loop through each region in regional_results
+for (region in names(regional_results_ERA5Land_eva)) { #swap european_regions for regional_results for all regions
+  # Extract the result array for the current region
+  result_array_region <- regional_results_ERA5Land_eva[[region]][31:55] #2000-2024
+  fit_ref <- extRemes::fevd(result_array_region, type = "Gumbel", method = "MLE", units = "years")
+  return_level <- round(as.numeric(extRemes::return.level(fit_ref, return.period = use_rp)))
+
+  RL_ERA_modern[[region]] <- return_level
+  
+}
+
+# Modern ERA5-Land (1994-2024) for each region: 
+# Initialize a list to store results for all regions
+RL_ERA_overlap <- list() #save modern 5yr events (in mm) for each region
+
+# Loop through each region in regional_results
+for (region in names(regional_results_ERA5Land_eva)) { #swap european_regions for regional_results for all regions
+  # Extract the result array for the current region
+  result_array_region <- regional_results_ERA5Land_eva[[region]][1:40] #1970-2009
+  fit_ref <- extRemes::fevd(result_array_region, type = "Gumbel", method = "MLE", units = "years")
+  return_level <- round(as.numeric(extRemes::return.level(fit_ref, return.period = use_rp)))
+
+  RL_ERA_overlap[[region]] <- return_level
+  
+}
+
+##### ModE-Sim 
+path <- here::here("data/volc_impact_aggregates/collected_p_pet/")
+folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020 in first set
+
+# Extract unique ensemble member identifiers from folder names
+ensemble_member <- unique(basename(folders))[1:20]
+ensemble_members <- paste0(ensemble_member, "_tidy")
+
+
+corrected_full_eva <- corrected_full[ names(corrected_full) != "SAH" ]
+
+regions_to_modify <- c("CAU", "EAU", "NAU", "NZ", "SAU", "RFE", "EAS", "SEA")
+
+
+###Overlap with ERA5-land for each region (1970-2009):
+RL_ModE_overlap <- list()
+
+# Loop over all regions
+for (region in names(corrected_full_eva)) {
+  # Extract the result array for the current region
+  result_array_region <- corrected_full_eva[[region]][551:590,]#1970-2009
+  
+  # Choose ensemble members dynamically - exclude m001 for Australia and South East Asia 
+  if (region %in% regions_to_modify) {
+    ems <- ensemble_members[ensemble_members != "m001_tidy"]  # Skip m001
+  } else {
+    ems <- ensemble_members
+  }
+  
+  RL_list <- list()
+  
+  for (em in ems) {
+    # Extract the result array for the current em
+    result_array_em <- result_array_region[,em]
+    fit_ref <- extRemes::fevd(result_array_em, type = "Gumbel", method = "MLE", units = "years")
+    return_level <- round(as.numeric(extRemes::return.level(fit_ref, return.period = use_rp)))
+    RL_list[[em]] <- return_level
+ }
+    # Combine all spatial averages into a single array for the current region
+  result_array_region <- do.call(cbind, RL_list)
+  # Store the result for the current region
+  RL_ModE_overlap[[region]] <- result_array_region
+}
+
+### Pre-industrial for every region (1420-1850):
+RL_ModE_preind <- list()
+
+# Loop over all regions
+for (region in names(corrected_full_eva)) {
+  # Extract the result array for the current region
+  result_array_region <- corrected_full_eva[[region]][1:30,]#1420-1450
+  
+  # Choose ensemble members dynamically - exclude m001 for Australia and South East Asia 
+  if (region %in% regions_to_modify) {
+    ems <- ensemble_members[ensemble_members != "m001_tidy"]  # Skip m001
+  } else {
+    ems <- ensemble_members
+  }
+  
+  RL_list <- list()
+  
+  for (em in ems) {
+    # Extract the result array for the current em
+    result_array_em <- result_array_region[,em]
+    fit_ref <- extRemes::fevd(result_array_em, type = "Gumbel", method = "MLE", units = "years")
+    return_level <- round(as.numeric(extRemes::return.level(fit_ref, return.period = use_rp)))
+    RL_list[[em]] <- return_level
+ }
+    # Combine all spatial averages into a single array for the current region
+  result_array_region <- do.call(cbind, RL_list)
+  # Store the result for the current region
+  RL_ModE_preind[[region]] <- result_array_region
+}
+
+### Early-industrial for every region (1851-1950):
+RL_ModE_earlyind <- list()
+
+# Loop over all regions
+for (region in names(corrected_full_eva)) {
+  # Extract the result array for the current region
+  result_array_region <- corrected_full_eva[[region]][470:501,]#1890-1920
+  
+  # Choose ensemble members dynamically - exclude m001 for Australia and South East Asia 
+  if (region %in% regions_to_modify) {
+    ems <- ensemble_members[ensemble_members != "m001_tidy"]  # Skip m001
+  } else {
+    ems <- ensemble_members
+  }
+  
+  RL_list <- list()
+  
+  for (em in ems) {
+    # Extract the result array for the current em
+    result_array_em <- result_array_region[,em]
+    fit_ref <- extRemes::fevd(result_array_em, type = "Gumbel", method = "MLE", units = "years")
+    return_level <- round(as.numeric(extRemes::return.level(fit_ref, return.period = use_rp)))
+    RL_list[[em]] <- return_level
+ }
+    # Combine all spatial averages into a single array for the current region
+  result_array_region <- do.call(cbind, RL_list)
+  # Store the result for the current region
+  RL_ModE_earlyind[[region]] <- result_array_region
+}
+
+
+### Modern ModeSIM for every region (1951-2009):
+RL_ModE_modern <- list()
+
+# Loop over all regions
+for (region in names(corrected_full_eva)) {
+  # Extract the result array for the current region
+  result_array_region <- corrected_full_eva[[region]][556:580,]#1975-1999
+  
+  # Choose ensemble members dynamically - exclude m001 for Australia and South East Asia 
+  if (region %in% regions_to_modify) {
+    ems <- ensemble_members[ensemble_members != "m001_tidy"]  # Skip m001
+  } else {
+    ems <- ensemble_members
+  }
+  
+  RL_list <- list()
+  
+  for (em in ems) {
+    # Extract the result array for the current em
+    result_array_em <- result_array_region[,em]
+    fit_ref <- extRemes::fevd(result_array_em, type = "Gumbel", method = "MLE", units = "years")
+    return_level <- round(as.numeric(extRemes::return.level(fit_ref, return.period = use_rp)))
+    RL_list[[em]] <- return_level
+ }
+    # Combine all spatial averages into a single array for the current region
+  result_array_region <- do.call(cbind, RL_list)
+  # Store the result for the current region
+  RL_ModE_modern[[region]] <- result_array_region
+}
+
+```
+
+Plot in scatterplots: 
+
+```{r}
+# #### Overlap period ModE-Sim and ERA5-Land
+
+####### -------------------- Overlap period --------------------------------
+# 1) Summarise lists into a data.frame:
+df_overlap <- tibble(
+  region = names(RL_ERA_overlap),
+  era     = unlist(RL_ERA_overlap)
+) %>% 
+  mutate(
+    # Grab the ensemble vector for each region
+    mod_vec = RL_ModE_overlap[region],
+    # Compute mean, min, max
+    mod_mean = map_dbl(mod_vec, ~ mean(.x)),
+    mod_min  = map_dbl(mod_vec, ~ min(.x)),
+    mod_max  = map_dbl(mod_vec, ~ max(.x))
+  ) %>% 
+  dplyr::select(-mod_vec)
+
+# Ensure the continent information is consistent
+df_overlap <- df_overlap %>%
+  mutate(continent = case_when(
+    region %in% continent_mapping[["Europe"]] ~ "Europe",
+    region %in% continent_mapping[["North America"]] ~ "North America",
+    region %in% continent_mapping[["Africa"]] ~ "Africa",
+    region %in% continent_mapping[["Asia"]] ~ "Asia",
+    region %in% continent_mapping[["Central America"]] ~ "Central America",
+    region %in% continent_mapping[["South America"]] ~ "South America",
+    region %in% continent_mapping[["Australia"]] ~ "Australia",
+    TRUE ~ "Other"
+  ))
+
+# 2) Plot with horizontal error bars
+scatter_overlap <- ggplot(df_overlap, aes(x = mod_mean, y = era, color = continent)) +
+  geom_errorbarh(aes(xmin = mod_min, xmax = mod_max), height = 100) +
+  geom_point(size = 2) +
+  scale_color_manual(values = continent_colors) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_smooth(method = "lm", color = "red", se = FALSE, linewidth= 0.5) +  # Trend line
+  #geom_text(aes(label = region), hjust = 0.5, vjust = -0.5, size = 3, colour = "black") + # Annotate with region names
+  labs(
+    x     = "ModE-Sim* 30yr PCWD [mm] (1970-2009)",
+    y     = "ERA5-Land 30yr PCWD [mm] (1970-2009)",
+    color = "Continent"
+  ) +
+  scale_x_continuous(breaks = c(0, 500, 1000, 1500, 2000), limits = c(0, 2000)) +
+  scale_y_continuous(breaks = c(0, 500, 1000, 1500, 2000),limits = c(0, 2000)) +
+  theme_classic() +
+  theme(
+    legend.position =  c(0.2, 0.75),
+    plot.title         = element_text(hjust = 0.5, face = "bold"),
+    legend.title       = element_text(face = "bold"),
+    text = element_text(size= 13),
+    axis.title.y = element_text(
+      margin = margin(r = 10)),
+    axis.title.x = element_text(
+      margin = margin(t = 10))
+  )
+
+
+####### -------------------- Modern_ModE-Sim --------------------------------
+# 1) Summarise lists into a data.frame:
+df_modern_era <- tibble(
+  region = names(RL_ERA_modern),
+  era_mod     = unlist(RL_ERA_modern),
+  era_overlap = unlist(RL_ERA_overlap)
+) 
+
+# Ensure the continent information is consistent
+df_modern_era <- df_modern_era %>%
+  mutate(continent = case_when(
+    region %in% continent_mapping[["Europe"]] ~ "Europe",
+    region %in% continent_mapping[["North America"]] ~ "North America",
+    region %in% continent_mapping[["Africa"]] ~ "Africa",
+    region %in% continent_mapping[["Asia"]] ~ "Asia",
+    region %in% continent_mapping[["Central America"]] ~ "Central America",
+    region %in% continent_mapping[["South America"]] ~ "South America",
+    region %in% continent_mapping[["Australia"]] ~ "Australia",
+    TRUE ~ "Other"
+  ))
+
+# 2) Plot with horizontal error bars
+scatter_era5 <- ggplot(df_modern_era, aes(x = era_overlap, y = era_mod, color = continent)) +
+  geom_point(size = 2) +
+  scale_color_manual(values = continent_colors) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_smooth(method = "lm", color = "red", se = FALSE, linewidth= 0.5) +  # Trend line
+  #geom_text(aes(label = region), hjust = 0.5, vjust = -0.5, size = 3, colour = "black") + # Annotate with region names
+  labs(
+    x     = "ERA5-Land 30yr PCWD [mm] (1975-1999)",
+    y     = "ERA5-Land 30yr PCWD [mm] (2000-2024)",
+    color = "Continent"
+  ) +
+  scale_x_continuous(breaks = c(0, 500, 1000, 1500, 2000), limits = c(0, 2000)) +
+  scale_y_continuous(breaks = c(0, 500, 1000, 1500, 2000),limits = c(0, 2000)) +
+  theme_classic() +
+  theme(
+    legend.position    = "none",
+    plot.title         = element_text(hjust = 0.5, face = "bold"),
+    legend.title       = element_text(face = "bold"),
+    text = element_text(size= 13),
+    axis.title.y = element_text(
+      margin = margin(r = 10)),
+    axis.title.x = element_text(
+      margin = margin(t = 10))
+  )
+
+
+####### -------------------- Modern ModE-SIm --------------------------------
+# 1) Summarise lists into a data.frame:
+df_modern_ModE <- tibble(
+  region = names(RL_ERA_modern),
+  era     = unlist(RL_ERA_modern)
+) %>% 
+  mutate(
+    # Grab the ensemble vector for each region
+    mod_vec = RL_ModE_overlap[region],
+    # Compute mean, min, max
+    mod_mean = map_dbl(mod_vec, ~ mean(.x)),
+    mod_min  = map_dbl(mod_vec, ~ min(.x)),
+    mod_max  = map_dbl(mod_vec, ~ max(.x))
+  ) %>% 
+  dplyr::select(-mod_vec)
+
+# Ensure the continent information is consistent
+df_modern_ModE <- df_modern_ModE %>%
+  mutate(continent = case_when(
+    region %in% continent_mapping[["Europe"]] ~ "Europe",
+    region %in% continent_mapping[["North America"]] ~ "North America",
+    region %in% continent_mapping[["Africa"]] ~ "Africa",
+    region %in% continent_mapping[["Asia"]] ~ "Asia",
+    region %in% continent_mapping[["Central America"]] ~ "Central America",
+    region %in% continent_mapping[["South America"]] ~ "South America",
+    region %in% continent_mapping[["Australia"]] ~ "Australia",
+    TRUE ~ "Other"
+  ))
+
+# 2) Plot with horizontal error bars
+scatter_era_mod <- ggplot(df_modern_ModE, aes(x = mod_mean, y = era, color = continent)) +
+  geom_errorbarh(aes(xmin = mod_min, xmax = mod_max), height = 100) +
+  geom_point(size = 2) +
+  scale_color_manual(values = continent_colors) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_smooth(method = "lm", color = "red", se = FALSE, linewidth= 0.5) +  # Trend line
+  #geom_text(aes(label = region), hjust = 0.5, vjust = -0.5, size = 3, colour = "black") + # Annotate with region names
+  labs(
+    x     = "ModE-Sim* 30yr PCWD [mm] (1975-1999)",
+    y     = "ERA5-Land 30yr PCWD [mm] (2000-2024)",
+    color = "Continent"
+  ) +
+  scale_x_continuous(breaks = c(0, 500, 1000, 1500, 2000), limits = c(0, 2000)) +
+  scale_y_continuous(breaks = c(0, 500, 1000, 1500, 2000),limits = c(0, 2000)) +
+  theme_classic() +
+  theme(
+    legend.position    = "none",
+    plot.title         = element_text(hjust = 0.5, face = "bold"),
+    legend.title       = element_text(face = "bold"),
+        text = element_text(size= 13),
+    axis.title.y = element_text(
+      margin = margin(r = 10)),
+    axis.title.x = element_text(
+      margin = margin(t = 10))
+  )
+
+
+scatter_overlap_2 <- scatter_overlap + theme(plot.margin = margin(t = 40, r = 20, b = 5, l = 5))
+scatter_era5_2 <- scatter_era5 + theme(plot.margin = margin(t = 40, r = 20, b = 5, l = 5))
+scatter_era_mod_2 <- scatter_era_mod + theme(plot.margin = margin(t = 40, r = 10, b = 5, l = 5))
+
+
+combined_val_scatter <- plot_grid(
+  scatter_overlap_2, 
+  scatter_era5_2, 
+  scatter_era_mod_2,
+  ncol = 3,
+  rel_widths = c(1, 1, 1),
+  align = "h",
+  axis = "tblr",
+  labels = c(
+    "a) Overlap period", 
+    "b) Modern ERA5-Land vs recent ERA5-Land", "c) Modern ERA5-Land vs recent ModE-Sim"
+  ),
+  label_size = 14,
+  label_x = 0.1,
+  hjust = 0,
+  label_y = 0.98,
+  vjust = 1
+)
+
+print(combined_val_scatter)
+
+ggsave(
+  filename = here::here("figures/Scatter_validation_plots.pdf"),
+  plot     = combined_val_scatter,
+  device   = cairo_pdf,    # better text rendering
+  width    = 17,           # in inches
+  height   = 5.9,            # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+
+```
+
+
+```{r}
+# Calculate the correlation and mean bias between ERA5-Land and ModE-Sim* 5-year events during overlap 
+summary_stats <- tibble(
+  correlation = cor(df_overlap$era, df_overlap$mod_mean, use = "complete.obs"),
+  mean_bias   = mean(df_overlap$mod_mean - df_overlap$era, na.rm = TRUE),
+  rel_bias = mean_bias / mean(df_overlap$mod_mean)
+)
+
+summary_stats
+
+
+fit_era <- lm(era_mod ~ era_overlap, data = df_modern_era)
+summary(fit_era)
+coef(fit_era)
+
+fit_mod <- lm(era ~ mod_mean, data = df_modern_ModE)
+summary(fit_mod)
+coef(fit_mod)
+
+```
+
+
+## Scatterplots comparing annual PCWD over time to 30yr extremes over time
+### Approach
+
+Determining whether 21st century (2000-2024) droughts are unprecedented and quantifying their "extremeness" depends on the reference. Here, we determine these aspects based on alternative choices of the reference:
+
+1. Recent past climate reanalysis (ERA5) data (1975-1999)
+2. Recent past climate model simulation, across all ensemble members (1975-1999)
+3. Historical climate model simulation, across all ensemble members (1850-1999)
+4. Multi-centennial preindustrial climate model simulation, across all ensemble members (1420-1999)
+
+The magnitude of 21st century droughts are estimated based on ERA5 climate reanalysis data for years 2000-2024.
+
+## Read data
+
+### ERA5
+
+Interpreting the objects into nice and tidy data frames.
+```{r}
+list_era5 <- read_rds(here("data/regional_results_ERA5Land_cons.rds"))
+
+nregions <- length(list_era5)
+
+make_df_era5 <- function(vec){
+  tibble(
+    year = 1970:2024,
+    pcwd = vec
+  )
+}
+
+df_era5 <- purrr::map(
+  list_era5, 
+  ~make_df_era5(.)
+) |> 
+  bind_rows(.id = "region")
+
+df_era5 <- df_era5 |> 
+  filter(region != "SAH") #exclude Sahara Desert as unphysical values
+```
+
+### ModE-Sim
+
+```{r}
+extract_ensemble_number <- function(char){
+  char |> 
+    str_remove("_tidy") |> 
+    str_remove("m0") |> 
+    as.integer()
+}
+
+make_df_modesim <- function(df){
+  as_tibble(df) |> 
+    # not sure this is correct. Better to take years forward as part of the workflow. 
+    mutate(year = 1420:2009) |> 
+    pivot_longer(
+      cols = ends_with("_tidy"), 
+      names_to = "member", 
+      values_to = "pcwd", 
+      names_transform = extract_ensemble_number
+      )
+}
+
+list_modesim <- read_rds(here("data/regional_results_ModESim_bc.rds"))
+
+df_modesim <- purrr::map(
+  list_modesim,
+  ~make_df_modesim(.)
+) |> 
+  bind_rows(.id = "region")
+
+df_modesim <- df_modesim |> 
+  filter(region != "SAH")
+```
+
+
+## Record annual values
+
+Create objects that contain records for different references in different datasets.
+
+### ERA5
+
+1. ERA5: Record PCWD by region in years 1975-1999 and in years 2000-2024.
+```{r}
+df_record_era5 <- df_era5 |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+
+```
+
+Plot.
+```{r}
+# calculate SD of pcwd_max0
+sd0 <- df_era5 |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region) |> 
+  summarise(sd_pcwd = sd(pcwd, na.rm = TRUE)) |> 
+  ungroup()
+
+tmp <- df_record_era5 |>
+  left_join(sd0, by = "region") |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0,
+    is_shattering = pcwd_max1 > pcwd_max0 + 2 * sd_pcwd,
+    color_cat = case_when(
+      is_shattering ~ "shattering",
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
+
+# plot
+gg1 <- tmp |>
+  ggplot(aes(pcwd_max0, pcwd_max1, color = color_cat)) +
+  geom_point(size = 1, show.legend = TRUE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                "unprecedented" = "#91C499",
+                                "shattering" = "#B3001B")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ERA5-Land 1975-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("rec.-shat.")]) == .(n_shattering)),
+    title = "Recent ERA5-Land context"
+  )+  theme(
+    plot.title = element_text(size=13),
+    legend.position = c(0.02, 0.99),   # inside top-left
+    legend.justification = c("left", "top"),
+    legend.background = element_blank(),
+    text = element_text(size = 12),
+    legend.title = element_text(face = "bold", size=12),
+    legend.text = element_text(size=12)
+  )
+
+gg1
+```
+Plot which regions are unprecedented and which record shattering
+
+```{r}
+#Load reference regions and coastlines:
+load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
+
+# IPCC_WGI_reference_regions_v4 is a Spatial*DataFrame with a column "region" (or similar)
+refregions_sf <- st_as_sf(IPCC_WGI_reference_regions_v4)
+refregions_sf <- refregions_sf %>% rename(region = Acronym)
+
+temp.dir <- tempdir()
+unzip(here::here("data/Reference_regions/ne_110m_coastline.zip"), exdir = temp.dir)
+coastLines <- st_read(dsn = temp.dir, layer = "ne_110m_coastline")
+
+names(names(refregions))
+
+proj4string(refregions)
+
+
+# Load land data for filling continents
+land <- ne_countries(scale = "medium", returnclass = "sf")
+```
+
+
+```{r}
+colors_map <- c("within" = "#301934", 
+                "unprecedented"     = "#91C499", 
+                "shattering"  = "#B3001B")
+
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_recent <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs( title = "Recent ERA5-Land context")+
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = c(0.0, 0.0),   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_recent
+
+```
+
+
+### ModE-Sim recent (1975-1999)
+
+Record PCWD by region in ERA5, years 2000-2024 vs. in years 1975-1999 and all ensemble members in ModE-Sim.
+```{r}
+df_record_era5_modesim_recent <- df_modesim |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region, member) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+# calculate SD of pcwd_max0
+sd1 <- df_modesim |> 
+  filter(year %in% 1975:1999) |> 
+  group_by(region) |> 
+  summarise(sd_pcwd = sd(pcwd, na.rm = TRUE)) |> 
+  ungroup()
+
+tmp <- df_record_era5_modesim_recent |> 
+  left_join(sd1, by = "region") |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0_right,
+    is_shattering = pcwd_max1 > pcwd_max0_right + 2 * sd_pcwd,
+    color_cat = case_when(
+      is_shattering ~ "shattering",
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
+
+
+gg2 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("within" = "#301934",
+                                "unprecedented" = "#91C499",
+                                "shattering" = "#B3001B")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("rec.-shat.")]) == .(n_shattering)),
+    title = "Recent ModE-Sim context   "
+  )+
+  theme(plot.title = element_text(size=13),
+    text = element_text(size = 12))
+
+
+gg2
+```
+
+
+Plot which regions are unprecedented and which record shattering
+```{r}
+colors_map <- c("within" = "#301934", 
+                "unprecedented"     = "#91C499", 
+                "shattering"  = "#B3001B")
+
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_mode_recent <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Recent ModE-Sim context   ")+
+  theme_void() +
+  theme(
+    # plot.title      = element_text(face = "bold", hjust = .5),
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none"
+  )
+
+map_mode_recent
+```
+
+
+
+### ModE-Sim historical (1850-1999)
+
+Record PCWD by region in ERA5, years 2000-2024 vs. in years 1850-1999 and all ensemble members in ModE-Sim.
+```{r}
+df_record_era5_modesim_historical <- df_modesim |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(region, member) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+# calculate SD of pcwd_max0
+sd2 <- df_modesim |> 
+  filter(year %in% 1850:1999) |> 
+  group_by(region) |> 
+  summarise(sd_pcwd = sd(pcwd, na.rm = TRUE)) |> 
+  ungroup()
+
+tmp <- df_record_era5_modesim_historical |> 
+  left_join(sd2, by = "region") |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0_right,
+    is_shattering = pcwd_max1 > pcwd_max0_right + 2 * sd_pcwd,
+    color_cat = case_when(
+      is_shattering ~ "shattering",
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
+
+
+gg3 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(values = c("within" = "#301934",
+                                "unprecedented" = "#91C499",
+                                "shattering" = "#B3001B")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1850-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("rec.-shat.")]) == .(n_shattering)),
+    title = "Historical ModE-Sim context   "
+  )+
+    theme(plot.title = element_text(size=13),
+    text = element_text(size = 12))
+
+gg3
+```
+
+
+Plot which regions are unprecedented and which record shattering
+
+
+```{r}
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_historical <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Historical ModE-Sim context   ")+
+  theme_void() +
+  theme(
+    # plot.title      = element_text(face = "bold", hjust = .5),
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none"
+  )
+
+map_historical
+```
+### ModE-Sim multi-century (1420-1999)
+
+Record PCWD by region in ERA5, years 2000-2024 vs. in years 1850-1999 and all ensemble members in ModE-Sim.
+```{r}
+df_record_era5_modesim_multicent <- df_modesim |> 
+  filter(year %in% 1420:1999) |> 
+  group_by(region, member) |> 
+  summarise(pcwd_max0 = max(pcwd)) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_era5 |> 
+      filter(year %in% 2000:2024) |> 
+      group_by(region) |> 
+      summarise(pcwd_max1 = max(pcwd)),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+# calculate SD of pcwd_max0
+sd3 <- df_modesim |> 
+  filter(year %in% 1420:1999) |> 
+  group_by(region) |> 
+  summarise(sd_pcwd = sd(pcwd, na.rm = TRUE)) |> 
+  ungroup()
+
+tmp <- df_record_era5_modesim_multicent |> 
+  left_join(sd3, by = "region") |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0_right,
+    is_shattering = pcwd_max1 > pcwd_max0_right + 2 * sd_pcwd,
+    color_cat = case_when(
+      is_shattering ~ "shattering",
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+n_shattering <- sum(tmp$is_shattering, na.rm = TRUE)
+
+gg4 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(name = "Event type", values = c("within" = "#301934",
+                                "unprecedented" = "#91C499",
+                                "shattering" = "#B3001B")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1420-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater) ~ ", " ~ 
+                      italic(N[plain("rec.-shat.")]) == .(n_shattering)),
+    title = "Multicentennial ModE-Sim context   "
+  )+
+    theme(plot.title = element_text(size=13),
+    text = element_text(size = 12))
+
+gg4
+#ggsave(here("figures/category_scatter_legend.pdf"), plot = gg4, width = 6, height = 4)
+```
+
+Plot which regions are unprecedented and which record shattering
+
+```{r}
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_multicen <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event type"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Multicentennial ModE-Sim context   ")+
+  theme_void() +
+  theme(legend.position = "none")
+
+map_multicen
+
+#ggsave(here("figures/category_maps_legend.pdf"), plot = map_multicen, width = 8, height = 4)
+```
+
+## Record 25-year means
+
+Calculate rolling means of all data, separated by region (ModE-Sim also separated by ensemble member).
+```{r}
+df_era5_25 <- df_era5 |>
+  group_by(region) |>
+  arrange(year) |>
+  mutate(
+    pcwd_25 = slide_dbl(pcwd, mean, .before = 24, .complete = TRUE)
+  ) |>
+  ungroup()
+
+df_modesim_25 <- df_modesim |> 
+  group_by(region, member) |> 
+  nest() |> 
+  mutate(
+    data = map(data, ~ .x  |> 
+      mutate(
+        roll_mean = slide_dbl(
+          .x$pcwd,
+          mean,
+          .before = 24,     # 2 before = 3-point window (includes current)
+          .complete = TRUE  # require full window, so first 2 will be NA
+        )
+      )
+    )
+  )
+```
+
+
+### ERA5
+
+```{r}
+df_record25_era5 <- df_era5_25 |>
+  filter(year %in% c(1999, 2024)) |>
+  dplyr::select(region, year, pcwd_25) |>
+  pivot_wider(names_from = "year", values_from = "pcwd_25") |>
+  rename(
+    pcwd_max0 = `1999`,
+    pcwd_max1 = `2024`
+  )
+
+```
+
+
+```{r}
+tmp <- df_record25_era5 |>
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0,
+    color_cat = case_when(
+    is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+```
+
+Plot.
+```{r}
+
+gg5 <- tmp |> 
+  ggplot(aes(pcwd_max0, pcwd_max1, color = color_cat)) +
+  geom_point(size = 1, show.legend = TRUE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                                 "unprecedented"     = "#91C499")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+    labs(
+    x = "ERA5-Land 1975-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
+    title = "Recent ERA5-Land context"
+  )+  theme(
+    plot.title = element_text(size = 13),
+    legend.position = c(0.02, 0.99),   # inside top-left
+    legend.justification = c("left", "top"),
+    legend.background = element_blank(),
+    text = element_text(size = 12),
+    legend.title = element_text(face = "bold", size=12),
+    legend.text = element_text(size=12)
+  )
+
+gg5
+```
+
+
+```{r}
+
+colors_map <- c("within" = "#301934", 
+       "unprecedented"     = "#91C499")
+
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_modern_25 <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Recent ERA5-Land context")+
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = c(0.0, 0.0),   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_modern_25
+```
+### ModE-Sim recent (1975-1999)
+
+```{r}
+get_record <- function(df){
+  df |> 
+    filter(year %in% 1975:1999) |> 
+    filter(roll_mean == max(roll_mean)) |> 
+    pull(roll_mean)
+}
+
+df_record25_era5_modesim_recent <- df_modesim_25 |> 
+  mutate(pcwd_max0 = purrr::map_dbl(data, ~get_record(.))) |> 
+  dplyr::select(-data) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_record25_era5 |> 
+      dplyr::select(region, pcwd_max1),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+tmp <- df_record25_era5_modesim_recent |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0_right,
+    color_cat = case_when(
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+
+gg6 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(size = 1, show.legend = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                                 "unprecedented"     = "#91C499")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+    labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
+    title = "Recent ModE-Sim context"
+  )+  theme(
+    legend.position = c(0.05, 0.95),   # inside top-left
+    legend.justification = c("left", "top"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )+
+    theme(plot.title = element_text(size=13),
+    text = element_text(size = 12))
+
+gg6
+```
+
+```{r}
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_recent_25 <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Recent ModE-Sim context")+
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none",   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_recent_25
+```
+
+### ModE-Sim historical (1850-1999)
+
+```{r}
+get_record <- function(df){
+  df |> 
+    filter(year %in% 1850:1999) |> 
+    filter(roll_mean == max(roll_mean)) |> 
+    pull(roll_mean)
+}
+
+df_record25_era5_modesim_historical <- df_modesim_25 |> 
+  mutate(pcwd_max0 = purrr::map_dbl(data, ~get_record(.))) |> 
+  dplyr::select(-data) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_record25_era5 |> 
+      dplyr::select(region, pcwd_max1),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+
+tmp <- df_record25_era5_modesim_historical |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0_right,
+    color_cat = case_when(
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+
+gg7 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(size = 1, show.legend = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                                "unprecedented"     = "#91C499")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+    labs(
+    x = "ModE-Sim 1850-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
+    title = "Historical ModE-Sim context"
+  )+  theme(
+    legend.position = c(0.05, 0.95),   # inside top-left
+    legend.justification = c("left", "top"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )+
+    theme(plot.title = element_text(size=13),
+    text = element_text(size = 12))
+
+gg7
+```
+
+
+```{r}
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_historical_25 <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Historical ModE-Sim context   ")+
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none",   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_historical_25
+```
+### ModE-Sim multicentennial (1420-1999)
+
+```{r}
+get_record <- function(df){
+  df |> 
+    filter(year %in% 1444:1999) |> 
+    filter(roll_mean == max(roll_mean)) |> 
+    pull(roll_mean)
+}
+
+df_record25_era5_modesim_multicent <- df_modesim_25 |> 
+  mutate(pcwd_max0 = purrr::map_dbl(data, ~get_record(.))) |> 
+  dplyr::select(-data) |> 
+  ungroup() |> 
+  group_by(region) |> 
+  summarise(pcwd_max0_left = min(pcwd_max0), pcwd_max0_right = max(pcwd_max0)) |> 
+  left_join(
+    df_record25_era5 |> 
+      dplyr::select(region, pcwd_max1),
+    by = join_by(region)
+  )
+```
+
+Plot.
+```{r}
+tmp <- df_record25_era5_modesim_multicent |> 
+  mutate(
+    is_greater = pcwd_max1 > pcwd_max0_right,
+    color_cat = case_when(
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    )
+  )
+
+# counts
+n_greater <- sum(tmp$is_greater, na.rm = TRUE)
+
+gg8 <- tmp |> 
+  ggplot(aes(x = pcwd_max0_right, xend = pcwd_max0_left, y = pcwd_max1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(size = 1, show.legend = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+  scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                                "unprecedented"     = "#91C499")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+    labs(
+    x = "ModE-Sim 1420-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
+    title = "Mulitcentennial ModE-Sim context"
+  )+  theme(
+    legend.position = c(0.05, 0.95),   # inside top-left
+    legend.justification = c("left", "top"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )+
+    theme(plot.title = element_text(size=13),
+    text = element_text(size = 12))
+
+gg8
+```
+
+
+```{r}
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_multicent_25 <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Multicentennial ModE-Sim context   ")+
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none",   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_multicent_25
+```
+
+## 30-year extremes (pooled)
+
+Calculate rolling 30-year extremes of all data, separated by region (ModE-Sim also separated by ensemble member).
+```{r}
+# Function: fit Gumbel with extRemes and estimate given year return level
+fit_gumbel_return <- function(vec, return_period = 30) {
+  # Fit Gumbel (GEV with shape = 0)
+  fit <- extRemes::fevd(vec, type = "Gumbel")
+  
+  # Estimate T-year return level
+  rl <- unname(c(return.level(fit, return.period = return_period)))
+
+  return(rl)
+}
+
+calc_30x <- function(df){
+  fit_gumbel_return(df$pcwd)
+}
+
+calc_30x_across_members <- function(df){
+  # Collapse selected columns into vector
+  vec <- unlist(df %>% dplyr::select(-year))
+  vec <- vec[is.finite(vec)]
+  fit_gumbel_return(vec, return_period = 30)
+}
+
+## 25-year sliding windows
+apply_sliding <- function(df){
+  df %>%
+    mutate(return_level = slide_index_dbl(
+      seq_len(nrow(.)),
+      .i = year,
+      .before = 24,
+      .complete = TRUE,
+      .f = ~ calc_30x_across_members(df[.x, ])
+    ))
+}
+
+apply_pooled <- function(df, years){
+  df |> 
+    filter(year %in% years) |> 
+    calc_30x_across_members()
+}
+
+# fit two extreme value distributions on the two ERA5 periods and extract the 30-year extreme value.
+df_era5_30x <- df_era5 |> 
+  mutate(period = ifelse(year %in% 1975:1999, "pcwd_x30_ref0", ifelse(year %in% 2000:2024, "pcwd_x30_ref1", NA))) |> 
+  group_by(region, period) |> 
+  nest() |> 
+  drop_na(period) |> 
+  mutate(pcwd_30x = purrr::map_dbl(data, ~calc_30x(.))) |> 
+  pivot_wider(id_cols = -data, values_from = "pcwd_30x", names_from = "period")
+
+# this takes long to compute
+nmembers <- length(unique(df_modesim$member))
+
+# fit extreme value distributions on sliding windows of 25 years, gathering values from all ensemble members
+# warning: this takes a few minutes
+df_modesim_30x_sliding <- df_modesim |> 
+  mutate(member = paste0("m", as.integer(member))) |> 
+  pivot_wider(names_from = "member", values_from = "pcwd") |> 
+  group_by(region) |> 
+  nest() |> 
+  mutate(data = map(data, apply_sliding)) |> 
+  mutate(data = map(data, ~dplyr::select(., year, pcwd_30x = return_level))) |> 
+  unnest(data)
+
+# fit extreme value distributions on data pooled from all years in different periods
+df_modesim_30x_pooled <- df_modesim |> 
+  mutate(member = paste0("m", as.integer(member))) |> 
+  pivot_wider(names_from = "member", values_from = "pcwd") |> 
+  group_by(region) |> 
+  nest()
+  
+df_modesim_30x_pooled_multicent <- df_modesim_30x_pooled |> 
+  mutate(pcwd_30x = map_dbl(data, ~apply_pooled(., years = 1420:1999)))
+
+df_modesim_30x_pooled_historical <- df_modesim_30x_pooled |> 
+  mutate(pcwd_30x = map_dbl(data, ~apply_pooled(., years = 1850:1999)))
+
+df_modesim_30x_pooled_recent <- df_modesim_30x_pooled |> 
+  mutate(pcwd_30x = map_dbl(data, ~apply_pooled(., years = 1975:1999)))
+```
+
+### ERA5
+
+```{r}
+tmp <- df_era5_30x |> 
+  mutate(is_greater = pcwd_x30_ref0 < pcwd_x30_ref1,
+  color_cat = case_when(
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    ))
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg9 <- tmp |> 
+  ggplot(aes(pcwd_x30_ref0, pcwd_x30_ref1, color = color_cat)) +
+  geom_point(size = 1, show.legend = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+    scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                                "unprecedented"     = "#91C499")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ERA5-Land 1975-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
+    title = "Recent ERA5-Land context"
+  ) + theme(
+    plot.title = element_text(size = 13),
+    legend.position = c(0.05, 0.95),   # inside top-left
+    legend.justification = c("left", "top"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold"),
+    text = element_text(size = 12))
+
+gg9
+```
+
+```{r}
+
+colors_map <- c("within" = "#301934", 
+                                "unprecedented"     = "#91C499")
+
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_modern_30yr <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Recent ERA5-Land context   ")+
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none",   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_modern_30yr
+```
+
+
+### ModE-Sim recent (1975-1999)
+
+```{r}
+get_minmax <- function(df){
+  df |> 
+    filter(year %in% 1975:1999) |> 
+    ungroup() |> 
+    summarise(pcwd_30x_ref0_max = max(pcwd_30x, na.rm = TRUE), pcwd_30x_ref0_min = min(pcwd_30x, na.rm = TRUE))
+}
+
+df_30x_sliding_recent <- df_modesim_30x_sliding |> 
+  group_by(region) |> 
+  nest() |> 
+  mutate(data = purrr::map(data, ~get_minmax(.))) |> 
+  unnest(data) |> 
+  left_join(
+    df_era5_30x |> 
+      dplyr::select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+```{r}
+tmp <- df_30x_sliding_recent |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_30x_ref0_max,
+  color_cat = case_when(
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    ))
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg10 <- tmp |> 
+  ggplot(aes(x = pcwd_30x_ref0_max, xend = pcwd_30x_ref0_min, y = pcwd_x30_ref1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+    scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                                "unprecedented"     = "#91C499")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1975-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
+    title = "Recent ModE-Sim context  "
+  )+
+  theme(plot.title = element_text(size=13),
+    text = element_text(size = 12))
+
+gg10
+```
+
+```{r}
+
+colors_map <- c("within" = "#301934", 
+                                "unprecedented"     = "#91C499")
+
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_recent_30yr <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Recent ModE-Sim context   ")+
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none",   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_recent_30yr
+```
+
+
+### ModE-Sim historical (1850-1999)
+
+```{r}
+get_minmax <- function(df){
+  df |> 
+    filter(year %in% 1850:1999) |> 
+    ungroup() |> 
+    summarise(pcwd_30x_ref0_max = max(pcwd_30x, na.rm = TRUE), pcwd_30x_ref0_min = min(pcwd_30x, na.rm = TRUE))
+}
+
+df_30x_sliding_historical <- df_modesim_30x_sliding |> 
+  group_by(region) |> 
+  nest() |> 
+  mutate(data = purrr::map(data, ~get_minmax(.))) |> 
+  unnest(data) |> 
+  left_join(
+    df_era5_30x |> 
+      dplyr::select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+```{r}
+tmp <- df_30x_sliding_historical |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_30x_ref0_max,
+  color_cat = case_when(
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    ))
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg11 <- tmp |> 
+  ggplot(aes(x = pcwd_30x_ref0_max, xend = pcwd_30x_ref0_min, y = pcwd_x30_ref1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth = 1) +
+  geom_point(show.legend = FALSE, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+    scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                                "unprecedented"     = "#91C499")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1850-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
+    title = "Historical ModE-Sim context   "
+  )+
+  theme(plot.title = element_text(size=13),
+    text = element_text(size = 12))
+
+gg11
+```
+
+```{r}
+
+colors_map <- c("within" = "#301934", 
+                                "unprecedented"     = "#91C499")
+
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_historic_30yr <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Historical ModE-Sim context   ")+
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none",   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_historic_30yr
+```
+
+### ModE-Sim multi-century (1420-1999)
+
+```{r}
+get_minmax <- function(df){
+  df |> 
+    filter(year %in% 1420:1999) |> 
+    ungroup() |> 
+    summarise(pcwd_30x_ref0_max = max(pcwd_30x, na.rm = TRUE), pcwd_30x_ref0_min = min(pcwd_30x, na.rm = TRUE))
+}
+
+df_30x_sliding_multicent <- df_modesim_30x_sliding |> 
+  group_by(region) |> 
+  nest() |> 
+  mutate(data = purrr::map(data, ~get_minmax(.))) |> 
+  unnest(data) |> 
+  left_join(
+    df_era5_30x |> 
+      dplyr::select(region, pcwd_x30_ref1),
+    by = join_by(region)
+  )
+```
+
+```{r}
+tmp <- df_30x_sliding_multicent |> 
+  mutate(is_greater = pcwd_x30_ref1 > pcwd_30x_ref0_max,
+  color_cat = case_when(
+      is_greater ~ "unprecedented",
+      TRUE ~ "within"
+    ))
+
+n_greater <- tmp |> 
+  ungroup() |> 
+  summarise(n_greater = sum(is_greater)) |> 
+  pull(n_greater)
+
+gg12 <- tmp |> 
+  ggplot(aes(x = pcwd_30x_ref0_max, xend = pcwd_30x_ref0_min, y = pcwd_x30_ref1, color = color_cat)) +
+  geom_segment(show.legend = FALSE, linewidth =1) +
+  geom_point(show.legend = FALSE, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_equal() +
+    scale_color_manual(name = "Event category", values = c("within" = "#301934",
+                                                "unprecedented"     = "#91C499")) +
+  theme_classic() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "ModE-Sim 1420-1999 (mm)",
+    y = "ERA5-Land 2000-2024 (mm)",
+    subtitle = bquote(italic(N[plain("unprec.")]) == .(n_greater)),
+    title = "Multicentennial ModE-Sim context  "
+  )+
+  theme(plot.title = element_text(size=13),
+    text = element_text(size = 12))
+
+gg12
+```
+
+
+```{r}
+
+colors_map <- c("within" = "#301934", 
+                                "unprecedented"     = "#91C499")
+
+# Join categories onto the spatial data
+shown_sf <- refregions_sf %>% 
+  inner_join(tmp %>% dplyr::select(region, color_cat), by = "region")
+
+# centroids for labels
+pts <- shown_sf %>% 
+  st_centroid() %>% 
+  mutate(label = region)
+
+# build the map
+map_multicent_30yr <- ggplot() +
+  geom_sf(data = land, fill = "lightgray", color = NA) +
+  geom_sf(
+    data = shown_sf,
+    aes(fill = color_cat),   # <-- use color_cat instead of continent
+    color = "grey20",
+    size = 0.2,
+    alpha = 0.4
+  ) +
+  geom_sf_text(
+    data = pts,
+    aes(label = label),
+    size = 2.6,
+    colour= "black"
+  ) +
+  scale_fill_manual(
+    values   = colors_map,
+    na.value = "transparent",
+    name     = "Event category"
+  ) +
+  coord_sf(
+    xlim = c(-180, 178.125), ylim = c(-60, 90), expand = FALSE
+  ) +
+  labs(title = "Multicentennial ModE-Sim context   ")+
+  theme_void() +
+  theme(
+    plot.margin     = margin(0,0,0,0),
+    legend.position = "none",   # inside top-left
+    legend.justification = c("left", "bottom"),
+    legend.background = element_blank(),
+    legend.title = element_text(face = "bold")
+  )
+
+map_multicent_30yr
+```
+
+
+```{r}
+gg1_plot <- gg1 + theme(plot.margin = margin(30, 0, 0, 0))
+gg5_plot <- gg5 + theme(plot.margin = margin(30, 0, 0, 0))
+gg9_plot <- gg9 + theme(plot.margin = margin(30, 0, 0, 0))
+
+col1 <- plot_grid(
+  gg1_plot, gg2, gg3, gg4, 
+  ncol = 1,
+  nrow =4,
+  rel_heights = c(1.1, 1, 1, 1),
+  rel_widths = c(1,1, 1,1), # map takes smaller horizontal space
+  align = "v",
+    labels = c(
+    "a) Record annual PCWD", "b)", "c)", "d)"),
+    # Push labels all the way to the left margin of each panel
+  label_x = 0.1,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  expand      = TRUE 
+)
+
+col2 <- plot_grid(
+  gg5_plot, gg6, gg7, gg8, 
+  ncol = 1,
+  nrow =4,
+  rel_heights = c(1.1, 1, 1, 1),
+  rel_widths = c(1,1,1, 1), # map takes smaller horizontal space
+  align = "v",
+    labels = c("e) Record 25-year mean PCWD", "f)", "g)", "h)"),
+    # Push labels all the way to the left margin of each panel
+  label_x = 0.1,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  expand      = TRUE 
+  )
+
+col3 <- plot_grid(
+  gg9_plot, gg10,  gg11, gg12,
+  ncol = 1,
+  nrow =4,
+  rel_heights = c(1.1, 1, 1, 1),
+  rel_widths = c(1,1,1, 1), # map takes smaller horizontal space
+  align = "v",
+  labels = c("i) 30-year extreme PCWD", "j)", "k)", "l)"),
+    # Push labels all the way to the left margin of each panel
+  label_x = 0.1,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  expand      = TRUE 
+  )
+```
+
+## All combined plot
+
+```{r}
+gg_combined <- cowplot::plot_grid(
+  col1, col2, col3, 
+  ncol=3
+  )
+ggsave(here("figures/combined_record_pcwd_new.pdf"), plot = gg_combined, width = 12, height = 15)
+```
+
+## Combine all maps 
+
+```{r}
+map_recent <- map_recent + theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 0))
+map_mode_recent <- map_mode_recent + theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 0))
+map_historical <- map_historical + theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 0))
+map_multicen <- map_multicen + theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 0))
+
+map_modern_25 <- map_modern_25 + theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 0))
+map_recent_25 <- map_recent_25 + theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 0))
+map_historical_25 <- map_historical_25 + theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 0))
+map_multicent_25 <- map_multicent_25 + theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 0))
+
+row1 <- plot_grid(
+  map_recent, map_mode_recent, map_historical, map_multicen, 
+  ncol = 1,
+  nrow =4,
+  rel_widths = c(1,1, 1,1), # map takes smaller horizontal space
+  align = "v",
+    labels = c(
+    "a) Record annual PCWD mapped", "b)", "c)", "d)"),
+    # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  expand      = TRUE 
+)
+
+row2 <- plot_grid(
+  map_modern_25, map_recent_25, map_historical_25, map_multicent_25, 
+  ncol = 1,
+  nrow =4,
+  rel_widths = c(1,1,1, 1), # map takes smaller horizontal space
+  align = "v",
+    labels = c("e) Record 25-year mean PCWD mapped", "f)", "g)", "h)"),
+    # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  expand      = TRUE 
+  )
+
+row3 <- plot_grid(
+  map_modern_30yr, map_recent_30yr,  map_historic_30yr, map_multicent_30yr,
+  ncol = 1,
+  nrow =4,
+  rel_widths = c(1,1,1, 1), # map takes smaller horizontal space
+  align = "v",
+  labels = c("i) 30-year extreme PCWD", "j)", "k)", "l)"),
+    # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  expand      = TRUE 
+  )
+```
+
+```{r}
+gg_combined_maps <- cowplot::plot_grid(
+  row1, row2, row3, 
+  nrow=1, ncol=3
+  )
+
+ggsave(here("figures/combined_record_pcwd_maps_new.pdf"), plot = gg_combined_maps, width = 15, height = 12)
+```
+
