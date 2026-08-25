@@ -7,6 +7,11 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+# Define what to run:
+flag_only_run_CHregion <- TRUE  # if TRUE, only runs CH, otherwise all regions (including CH)
+
+dir.create(here::here("figures/"))
 ```
 
 ```{r libraries, message=FALSE, echo=FALSE}
@@ -48,7 +53,7 @@ library(tidyr)
 ```{r}
 ### read in IPCC Region information:
 source(here::here("analysis","define_reference_regions.R"))
-# defines refregion_objects
+refregion_objects <- define_reference_regions()
 
 regions <- names(refregion_objects)
 # refregion_objects['WCE']
@@ -85,8 +90,14 @@ continent_colors <- c(
 
 ```{r}
 
-regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land_cons.RData")) #1950 - 2024
-incl26_regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land_cons_25_26.RData")) #1950 - 2024
+if (flag_only_run_CHregion){
+  regional_results_ERA5Land<- readRDS(here("data/regionalResults_CH_only_ERA5Land_cons.RData")) #1950 - 2024
+  incl26_regional_results_ERA5Land<- readRDS(here("data/regionalResults_CH_only_ERA5Land_cons_25_26.RData")) #1950 - 2024
+} else {
+  regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land_cons.RData")) #1950 - 2024
+  incl26_regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land_cons_25_26.RData")) #1950 - 2024
+}
+
 ### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
 regional_results_ERA5Land <- lapply(regional_results_ERA5Land, function(x) x[21:75])
 
@@ -108,8 +119,13 @@ Apply bias correction for chosen overlap period (21:50) - excludes 60s with pote
 ```{r}
 #---------- Read in raw ModE-Sim regional aggregate data and merge epochs
 ### read in ModE-Sim regional results
-regional_results_1420 <- readRDS(here("data/regionalResults_1420_1.RData"))
-regional_results_1850 <- readRDS(here("data/regionalResults_1850_1.RData"))
+if (flag_only_run_CHregion){
+  regional_results_1420 <- readRDS(here("data/regionalResults_CH_only_1420_1.RData"))
+  regional_results_1850 <- readRDS(here("data/regionalResults_CH_only_1850_1.RData"))
+} else {
+  regional_results_1420 <- readRDS(here("data/regionalResults_1420_1.RData"))
+  regional_results_1850 <- readRDS(here("data/regionalResults_1850_1.RData"))
+}
 merged_results <- Map(rbind, regional_results_1420, regional_results_1850) # Stitch matrices together row-wise for each region
 
 ### Remove m001_tidy for areas CAU, EAU, NAU, NZ, SAU, RFE, EAS, SEA
