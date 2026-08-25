@@ -14,9 +14,19 @@ library(sf)
 library(here)
 library(sp)
 
+# Define what to run:
+flag_only_run_CHregion         <- TRUE  # if TRUE, only runs CH, otherwise all regions (including CH)
+
+#flag_only_run_2025_2026_update <- FALSE # if TRUE, only runs 2025/2026, otherwise only -2024
+flag_only_run_2025_2026_update <- TRUE # if TRUE, only runs 2025/2026, otherwise only -2024
+
+
 # 1. Define FILEPATH as a string (Climate4R needs a string path)
-# nc_path <- here("data/new_ERA5_PCWD_ANNMAX.nc")      # for 2025,2026
-nc_path <- here("data/ERA5Land_cons_PCWD_ANNMAX.nc") # for paper
+if (flag_only_run_2025_2026_update){
+  nc_path <- here("data/new_ERA5_PCWD_ANNMAX.nc")      # for 2025,2026
+} else {
+  nc_path <- here("data/ERA5Land_cons_PCWD_ANNMAX.nc") # for paper
+}
 
 ## read metadata variables using a temporary connection
 nc_pwcd  <- nc_open(nc_path)
@@ -61,14 +71,17 @@ grid$Data <- masked_array
 
 # 4. Reference Regions Setup ---------------------------------------------
 source(here::here("analysis","define_reference_regions.R"))
-# defines refregion_objects
-
+refregion_objects <- define_reference_regions()
 
 regions <- names(refregion_objects)
 # refregion_objects['WCE']
-# refregion_objects['WCE_W']
-# refregion_objects['WCE_W']
-# refregion_objects['CHE']
+# refregion_objects['WCE_W'] # new regions
+# refregion_objects['WCE_W'] # new regions
+# refregion_objects['CHE'] # new regions
+
+
+grid <- setGridProj(grid = grid, proj = proj4string(refregion_objects[[1]]))
+
 
 ########## for ERA5Land ###########################
 regional_results <- list()
@@ -76,7 +89,12 @@ regional_results <- list()
 # Get the total number of time steps from your main grid object
 total_time_steps <- dim(grid$Data)[1]
 
-for (region in regions) {
+if (flag_only_run_CHregion){
+  regions_to_loop <- c("CHE","WCE_W") # only subset
+} else {
+  regions_to_loop <- regions # all, including CHE, WCE_W, etc..
+}
+for (region in regions_to_loop) {
   message("Processing region: ", region)
 
   region_object <- refregion_objects[[region]]
@@ -151,9 +169,22 @@ for (region in regions) {
 #     Processing region: Bern/Zollikofen
 #     Bern/Zollikofen: 0 contributing grid cells
 
-#save calculated list
-#saveRDS(regional_results, file=(here("data/regionalResults_ERA5Land_cons_25_26.RData"))) # for 2025,2026  #conservatively remapped ERA5Land
-saveRDS(regional_results, file=(here("data/regionalResults_ERA5Land_cons.RData")))       # for paper      #conservatively remapped ERA5Land
+#save calculated list (note run once for base data and once again for 25_26 data)
+if (flag_only_run_CHregion){
+  if (flag_only_run_2025_2026_update){
+    saveRDS(regional_results, file=(here("data/regionalResults_CH_only_ERA5Land_cons_25_26.RData"))) # for 2025,2026,newRegion
+  } else {
+    saveRDS(regional_results, file=(here("data/regionalResults_CH_only_ERA5Land_cons.RData")))       # for old-period,newRegion
+  }
+} else {
+  if (flag_only_run_2025_2026_update){
+    saveRDS(regional_results, file=(here("data/regionalResults_ERA5Land_cons_25_26.RData"))) # for 2025,2026
+  } else {
+    saveRDS(regional_results, file=(here("data/regionalResults_ERA5Land_cons.RData")))       # for paper
+  }
+}
+
+
 
 ## check grid alignment
 # Load relevant libraries

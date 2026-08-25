@@ -11,16 +11,45 @@ library(terra)
 library(ncdf4)
 library(rnaturalearth)
 library(sf)
+library(here)
+library(sp)
+
+# Define what to run:
+flag_only_run_CHregion <- TRUE  # if TRUE, only runs CH, otherwise all regions (including CH)
+
+# PREPARATION OF INPUT DATA:
+# see infos in /storage/capacity/occr_geco/data_2/archive_projects/MSc_2025_phelpap_cwdModESim/ModESim/README.md
+#
+# Step 1) untar the m001 ModESim data (~349 GB tarred, xxx GB untarred):
+#mkdir -p /storage/scratch/giub_geco/fbernhard/ModESim/
+# tar -xzf /storage/capacity/occr_geco/data_2/archive_projects/MSc_2025_phelpap_cwdModESim/ModESim/m001_tidy.tar.gz \
+#  --directory /storage/scratch/giub_geco/fbernhard/ModESim/
+#du -d1 -h /storage/scratch/giub_geco/fbernhard/ModESim/m001_tidy/
+#
+# Step 2) untar the m002 to m020 ModESim data (~146 GB tarred, 470 GB untarred): # decompression takes about an hour
+# 2a)
+# module load parallel
+# seq -w 002 020 | \
+#   parallel -j4 ' \
+#     tar -xzf /storage/capacity/occr_geco/data_2/archive_projects/MSc_2025_phelpap_cwdModESim/ModESim/m{}_tidy.tar.gz \
+#     -C /storage/scratch/giub_geco/fbernhard/ModESim/
+#
+# 2b) ssh ubelix; cd ~; sbatch /storage/capacity/occr_geco/data_2/archive_projects/MSc_2025_phelpap_cwdModESim/ModESim/extract.sbatch
+#
+# TO CHECK: list.files(ModESim_path, full.names = TRUE, pattern = "m[0-9]{3}_tidy")
+
 
 #lat lon and time info from netcdf files
 ##read in data
 #input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
 #input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
-#
-# mkdir /storage/scratch/giub_geco/fbernhard/m001_tidy/
-# tar -xzf /storage/capacity/occr_geco/data_2/archive_projects/MSc_2025_phelpap_cwdModESim/ModESim/m001_tidy.tar.gz --directory /storage/scratch/giub_geco/fbernhard/m001_tidy/
-input_file_1850 <- "/storage/scratch/giub_geco/fbernhard/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
-input_file_1420 <- "/storage/scratch/giub_geco/fbernhard/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
+input_file_1850 <- "/storage/scratch/giub_geco/fbernhard/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
+input_file_1420 <- "/storage/scratch/giub_geco/fbernhard/ModESim/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
+
+# But also prepare all other m002-m020 for further down
+#ModESim_path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim"
+ModESim_path <- "/storage/scratch/giub_geco/fbernhard/ModESim"
+
 
 nc_pwcd_1850 <- nc_open(input_file_1850)
 pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")
@@ -75,28 +104,19 @@ grid_sf$in_land <- st_intersects(grid_sf, land, sparse = FALSE) %>% rowSums() > 
 land_sea_mask <- matrix(grid_sf$in_land, nrow = 192, ncol = 96, byrow = FALSE)  # Corrected: 192 longitudes, 96 latitudes
 land_sea_mask <- t(land_sea_mask)
 
-
 ### read in IPCC Region information:
 #Load reference regions and coastlines:
+source(here::here("analysis","define_reference_regions.R"))
+refregion_objects <- define_reference_regions()
 
-load("/storage/homefs/ph23v078/Reference_regions/IPCC-WGI-reference-regions-v4_R.rda", verbose = TRUE)
-
-#simplify this object by converting it to a SpatialPolygons class object (i.e., only the polygons are retained and their attributes discarded):
-refregions <- as(IPCC_WGI_reference_regions_v4, "SpatialPolygons")
-
-# List of regions to loop over --- excludes ocean basins
-regions <- c("GIC", "NWN", "NEN", "WNA", "CNA", "ENA", "NCA", "SCA", "CAR", "NWS",
-             "NSA", "NES", "SAM", "SWS", "SES", "SSA", "NEU", "WCE", "EEU", "MED",
-             "SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG", "RAR", "WSB",
-             "ESB", "RFE", "WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "NAU",
-             "CAU", "EAU", "SAU", "NZ")
-# regions <- c("GIC")
-
-
+regions <- names(refregion_objects)
+# refregion_objects['WCE']
+# refregion_objects['WCE_W'] # new regions
+# refregion_objects['WCE_W'] # new regions
+# refregion_objects['CHE'] # new regions
 
 #as before but loop over all regions also, saving everything in an array
-path <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim"
-folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}_tidy") #m001 - m020 in first set
+folders <- list.files(ModESim_path, full.names = TRUE, pattern = "m[0-9]{3}_tidy") #m001 - m020 in first set
 
 # Extract unique ensemble member identifiers from folder names
 ensemble_members <- unique(basename(folders))
@@ -120,17 +140,22 @@ apply_land_mask <- function(grid_data, slm) {
   return(grid_data)
 }
 
+# Define regions to loop:
+if (flag_only_run_CHregion){
+  regions_to_loop <- c("CHE","WCE_W") # only subset
+} else {
+  regions_to_loop <- regions # all, including CHE, WCE_W, etc..
+}
+
 ########## for 1420 to 1849, set 1 ###########################
 
-# Initialize a list to store results for all regions
+# Initialize a list to store results for requested regions
 regional_results_1420 <- list()
 
-# Loop over all regions
-for (region in regions) {
+# Loop over requested regions
+for (region in regions_to_loop) {
   # Extract the spatial object corresponding to the current region
-  region_object <- refregions[c(region)]
-
-  # Check if the subset is valid
+  region_object <- refregion_objects[[region]]
   if (is.null(region_object)) {
     warning(paste("Region not found:", region))
     next
@@ -141,7 +166,7 @@ for (region in regions) {
 
   for (em in ensemble_members) {
     # Construct the folder path for the current ensemble member
-    folder <- file.path(path, em)
+    folder <- file.path(ModESim_path, em)
     # Construct file paths for the two time periods
     file_1420 <- file.path(folder, "04_result_1420/PCWD_ANNMAX.nc")
 
@@ -154,7 +179,7 @@ for (region in regions) {
       grid_1420 <- apply_land_mask(grid_1420, land_sea_mask)
 
       # Set spatial projection
-      grid_1420 <- setGridProj(grid = grid_1420, proj = proj4string(refregions))
+      grid_1420 <- setGridProj(grid = grid_1420, proj = proj4string(region_object))
 
       # Perform spatial overlay
       grid_region_1420 <- overGrid(grid_1420, region_object)
@@ -180,17 +205,20 @@ for (region in regions) {
   regional_results_1420[[region]] <- result_array_region
 }
 #save calculated list
-saveRDS(regional_results_1420, file="~/cwd_global/data/regionalResults_1420_1.RData") #1420_1 for set 1
-
+if (flag_only_run_CHregion){
+  saveRDS(regional_results_1420, file=(here("data/regionalResults_CH_only_1420_1.RData")))  #1420_1 for set 1
+} else {
+  saveRDS(regional_results_1420, file=(here("data/regionalResults_1420_1.RData")))  #1420_1 for set 1
+}
 
 ############## for 1850-2009, set 1 ##########
-# Initialize a list to store results for all regions
+# Initialize a list to store results for requested regions
 regional_results_1850 <- list()
 
-# Loop over all regions
-for (region in regions) {
+# Loop over requested regions
+for (region in regions_to_loop) {
   # Extract the spatial object corresponding to the current region
-  region_object <- refregions[c(region)]
+  region_object <- refregion_objects[[region]]
 
   # Check if the subset is valid
   if (is.null(region_object)) {
@@ -203,7 +231,7 @@ for (region in regions) {
 
   for (em in ensemble_members) {
     # Construct the folder path for the current ensemble member
-    folder <- file.path(path, em)
+    folder <- file.path(ModESim_path, em)
     # Construct file paths for the two time periods
     file_1850 <- file.path(folder, "04_result_1850/PCWD_ANNMAX.nc")
 
@@ -216,7 +244,7 @@ for (region in regions) {
       grid_1850 <- apply_land_mask(grid_1850, land_sea_mask)
 
       # Set spatial projection
-      grid_1850 <- setGridProj(grid = grid_1850, proj = proj4string(refregions))
+      grid_1850 <- setGridProj(grid = grid_1850, proj = proj4string(region_object))
 
       # Perform spatial overlay
       grid_region_1850 <- overGrid(grid_1850, region_object)
@@ -243,8 +271,11 @@ for (region in regions) {
 }
 
 #save calculated list
-saveRDS(regional_results_1850, file="~/cwd_global/data/regionalResults_1850_1.RData") #1850_1 for set 1
-
+if (flag_only_run_CHregion){
+  saveRDS(regional_results_1850, file=(here("data/regionalResults_CH_only_1850_1.RData")))  #1850_1 for set 1
+} else {
+  saveRDS(regional_results_1850, file=(here("data/regionalResults_1850_1.RData")))  #1850_1 for set 1
+}
 
 # # ##################################### Code verification
 #
