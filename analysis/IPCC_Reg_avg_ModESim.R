@@ -142,7 +142,7 @@ apply_land_mask <- function(grid_data, slm) {
 
 # Define regions to loop:
 if (flag_only_run_CHregion){
-  regions_to_loop <- c("CHE","WCE_W") # only subset
+  regions_to_loop <- c("CHE","WCE_W","WCE") # only subset
 } else {
   regions_to_loop <- regions # all, including CHE, WCE_W, etc..
 }
