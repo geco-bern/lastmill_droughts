@@ -47,19 +47,15 @@ library(tidyr)
 
 ```{r}
 ### read in IPCC Region information:
-#Load reference regions and coastlines:
-load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
+source(here::here("analysis","define_reference_regions.R"))
+# defines refregion_objects
 
+regions <- names(refregion_objects)
+# refregion_objects['WCE']
+# refregion_objects['WCE_W']
+# refregion_objects['WCE_W']
+# refregion_objects['CHE']
 
-#simplify this object by converting it to a SpatialPolygons class object (i.e., only the polygons are retained and their attributes discarded):
-refregions <- as(IPCC_WGI_reference_regions_v4, "SpatialPolygons")
-
-# List of regions to loop over --- excludes ocean basins
-regions <- c("GIC", "NWN", "NEN", "WNA", "CNA", "ENA", "NCA", "SCA", "CAR", "NWS",
-             "NSA", "NES", "SAM", "SWS", "SES", "SSA", "NEU", "WCE", "EEU", "MED",
-             "SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG", "RAR", "WSB",
-             "ESB", "RFE", "WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "NAU",
-             "CAU", "EAU", "SAU", "NZ")
 
 # Define continent assignments
 continent_mapping <- list(
@@ -71,7 +67,18 @@ continent_mapping <- list(
   "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
   "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
 )
+continent_colors <- c(
+  "Europe" = "#F5B0CB",
+  "North America" = "#236A3F",
+  "Africa" = "#91C7B1",
+  "Asia" = "#E5973B",
+  "Central America" = "#B33951",
+  "South America" = "#E3D081",
+  "Australia" = "#3C3980",
+  "Ocean" = "white"
+)
 
+# not mapping the extra regions: "WCE_E","WCE_W","CHE","BERN (25km)","Bern/Zollikofen"
 ```
 
 ### Load modern ERA5-Land reanalysis data
@@ -85,8 +92,8 @@ regional_results_ERA5Land <- lapply(regional_results_ERA5Land, function(x) x[21:
 
 ERA5_combined_26 <- mapply(c, regional_results_ERA5Land, incl26_regional_results_ERA5Land, SIMPLIFY = FALSE)
 # save cropped ERA5Land data: 
-saveRDS(ERA5_combined_26, file = here::here("data/regional_results_ERA5Land_cons_incl26.rds"))
-
+saveRDS(ERA5_combined_26, file = here::here("data/regional_results_ERA5Land_cons_incl26.rds"))   # for 2025-2026
+#saveRDS(regional_results_ERA5Land, file = here::here("data/regional_results_ERA5Land_cons.rds")) # for paper
 ```
 
 
@@ -316,27 +323,6 @@ combined_data_raw <- bind_rows(ModESim_long, ModESim_long_bc, ERA5Land_long)
 #combined_data_bc <- bind_rows(ModESim_long_bc, ERA5Land_long) #bias corrected ModE-Sim
 
 #### colours x-axis
-# Define continent assignments
-continent_mapping <- list(
-  "Europe" = c("NEU", "WCE", "EEU", "MED"),
-  "North America" = c("NWN", "NEN", "WNA", "CNA", "ENA", "GIC"),
-  "Africa" = c("SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG"),
-  "Asia" = c("WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "WSB", "ESB", "RFE", "RAR"),
-  "Central America" =c("NCA", "SCA", "CAR"),
-  "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
-  "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
-)
-
-continent_colors <- c(
-  "Europe" = "#F5B0CB",
-  "North America" = "#236A3F",
-  "Africa" = "#91C7B1",
-  "Asia" = "#E5973B",
-  "Central America" = "#B33951",
-  "South America" = "#E3D081",
-  "Australia" = "#3C3980",
-  "Ocean" = "white"
-)
 
 # Extract unique regions from your data
 unique_regions <- unique(combined_data_raw$Region)
@@ -549,28 +535,6 @@ variability_summary <- map_dfr(names(corrected_full), function(region) {
     snr           = mean(ensemble_mean) / mean(apply(residuals, 1, sd))
   )
 })
-
-# Define continent assignments
-continent_mapping <- list(
-  "Europe" = c("NEU", "WCE", "EEU", "MED"),
-  "North America" = c("NWN", "NEN", "WNA", "CNA", "ENA", "GIC"),
-  "Africa" = c("SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG"),
-  "Asia" = c("WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "WSB", "ESB", "RFE", "RAR"),
-  "Central America" =c("NCA", "SCA", "CAR"),
-  "South America" = c("NWS", "NSA", "NES", "SAM", "SWS", "SES", "SSA"),
-  "Australia" = c("NAU", "CAU", "EAU", "SAU", "NZ")
-)
-
-continent_colors <- c(
-  "Europe" = "#F5B0CB",
-  "North America" = "#236A3F",
-  "Africa" = "#91C7B1",
-  "Asia" = "#E5973B",
-  "Central America" = "#B33951",
-  "South America" = "#E3D081",
-  "Australia" = "#3C3980",
-  "Ocean" = "white"
-)
 
 # Convert list to a lookup data frame
 continent_df <- utils::stack(continent_mapping) %>%
@@ -1280,10 +1244,13 @@ Test - ModESim MED annmax PCWD distribution as context for ERA5Land extremes
 
 ```{r}
 ## select MED region data
-MED_ERA5 <- ERA5_combined_26[["WCE"]] #regional_results_ERA5Land for only until 2024 as in paper
+#MED_ERA5 <- ERA5_combined_26[["WCE"]] #regional_results_ERA5Land for only until 2024 as in paper
+MED_ERA5 <- ERA5_combined_26[["WCE_W"]] #regional_results_ERA5Land for 2025/2026
+# TODO: change here??? to WCE_W
 
 #ModESim data
-MED_MODE <- corrected_full[["WCE"]]
+#MED_MODE <- corrected_full[["WCE"]]
+# TODO: get working: MED_MODE <- corrected_full[["WCE_W"]]
 
 #attach time dimension
 time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
@@ -1291,15 +1258,15 @@ time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2026))
 
 
 # Convert ModE dataset to long format
-MED_MODE_long <- MED_MODE %>%
-  as.data.frame() %>%
-  mutate(time = time_info_mode) %>%
-  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
+# TODO: get working: MED_MODE_long <- MED_MODE %>%
+# TODO: get working:   as.data.frame() %>%
+# TODO: get working:   mutate(time = time_info_mode) %>%
+# TODO: get working:   pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
 
 # Compute means
-MED_MODE_mean <- MED_MODE_long %>%
-  group_by(time) %>%
-  summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
+# TODO: get working: MED_MODE_mean <- MED_MODE_long %>%
+# TODO: get working:   group_by(time) %>%
+# TODO: get working:   summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
 
 # Convert ERA5 dataset into long format
 MED_ERA5_df <- data.frame(time = time_info_era, PCWD = MED_ERA5)
@@ -1314,28 +1281,28 @@ baseline <- MED_ERA5[31:55] ##1970-1999
 fit_mod <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
 MED_era_mod_5yr <- round(as.numeric(extRemes::return.level(fit_mod, return.period = 5)))
 
-baseline <- as.vector(MED_MODE[535:560,])  #1975-1999
-fit_ref <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
-MED_ModESim_ref_5yr <- round(as.numeric(extRemes::return.level(fit_ref, return.period = 5)))
+# TODO: get working:  baseline <- as.vector(MED_MODE[535:560,])  #1975-1999
+# TODO: get working:  fit_ref <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
+# TODO: get working:  MED_ModESim_ref_5yr <- round(as.numeric(extRemes::return.level(fit_ref, return.period = 5)))
 
-baseline <- as.vector(MED_MODE[1:534,])  #1420-1969
-fit_full <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
-MED_ModESim_full_5yr <- round(as.numeric(extRemes::return.level(fit_full, return.period = 5)))
+# TODO: get working:  baseline <- as.vector(MED_MODE[1:534,])  #1420-1969
+# TODO: get working:  fit_full <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
+# TODO: get working:  MED_ModESim_full_5yr <- round(as.numeric(extRemes::return.level(fit_full, return.period = 5)))
 
 
 # 1) extract 1970-1999 of the wide matrix, then pivot
-MED_last60_long <- MED_MODE[(nrow(MED_MODE)-35):(nrow(MED_MODE)-10), ] %>%
-  as.data.frame() %>%
-  pivot_longer(cols = everything(),
-               names_to  = "ensemble",
-               values_to = "PCWD")
-
-# Convert ModE dataset to long format 1420 - 1969
-MED_MODE_long_sel <- MED_MODE %>%
-  as.data.frame() %>%
-  mutate(time = time_info_mode) %>%
-  filter(time < 1975) %>%
-  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
+# TODO: get working: MED_last60_long <- MED_MODE[(nrow(MED_MODE)-35):(nrow(MED_MODE)-10), ] %>%
+# TODO: get working:   as.data.frame() %>%
+# TODO: get working:   pivot_longer(cols = everything(),
+# TODO: get working:                names_to  = "ensemble",
+# TODO: get working:                values_to = "PCWD")
+# TODO: get working: 
+# TODO: get working: # Convert ModE dataset to long format 1420 - 1969
+# TODO: get working: MED_MODE_long_sel <- MED_MODE %>%
+# TODO: get working:   as.data.frame() %>%
+# TODO: get working:   mutate(time = time_info_mode) %>%
+# TODO: get working:   filter(time < 1975) %>%
+# TODO: get working:   pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
 
 # 1) extract last 60 rows of the wide matrix, then pivot
 MED_ERA5_long <- MED_ERA5[5:30] %>%
@@ -1352,25 +1319,25 @@ MED_ERA5_last30 <- MED_ERA5[31:55] %>%
 
 ggplot() +
   # full‑data density
-  geom_density(
-    data    = MED_MODE_long_sel,
-    aes(x   = PCWD,
-    color   = factor("ModESim_fill_full"),
-    fill    = factor("ModESim_fill_full")),
-    alpha   = 0.8,
-    linewidth    = 0.6,
-    show.legend = TRUE
-  ) +
-  # last‑60 density
-  geom_density(
-    data    = MED_last60_long,
-    aes(x   = PCWD,
-    color   = factor("ModESim_fill"),
-    fill    = factor("ModESim_fill")),
-    alpha   = 0.8,
-    linewidth    = 0.6,
-    show.legend = TRUE
-  ) +
+  # TODO: get working: geom_density(
+  # TODO: get working:   data    = MED_MODE_long_sel,
+  # TODO: get working:   aes(x   = PCWD,
+  # TODO: get working:   color   = factor("ModESim_fill_full"),
+  # TODO: get working:   fill    = factor("ModESim_fill_full")),
+  # TODO: get working:   alpha   = 0.8,
+  # TODO: get working:   linewidth    = 0.6,
+  # TODO: get working:   show.legend = TRUE
+  # TODO: get working: ) +
+  # TODO: get working: # last‑60 density
+  # TODO: get working: geom_density(
+  # TODO: get working:   data    = MED_last60_long,
+  # TODO: get working:   aes(x   = PCWD,
+  # TODO: get working:   color   = factor("ModESim_fill"),
+  # TODO: get working:   fill    = factor("ModESim_fill")),
+  # TODO: get working:   alpha   = 0.8,
+  # TODO: get working:   linewidth    = 0.6,
+  # TODO: get working:   show.legend = TRUE
+  # TODO: get working: ) +
     # first‑60 density
   geom_density(
     data    = MED_ERA5_long,

@@ -14,8 +14,13 @@ library(sf)
 
 #lat lon and time info from netcdf files
 ##read in data
-input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
-input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
+#input_file_1850 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
+#input_file_1420 <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
+#
+# mkdir /storage/scratch/giub_geco/fbernhard/m001_tidy/
+# tar -xzf /storage/capacity/occr_geco/data_2/archive_projects/MSc_2025_phelpap_cwdModESim/ModESim/m001_tidy.tar.gz --directory /storage/scratch/giub_geco/fbernhard/m001_tidy/
+input_file_1850 <- "/storage/scratch/giub_geco/fbernhard/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
+input_file_1420 <- "/storage/scratch/giub_geco/fbernhard/m001_tidy/04_result_1420/PCWD_ANNMAX.nc"
 
 nc_pwcd_1850 <- nc_open(input_file_1850)
 pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")
