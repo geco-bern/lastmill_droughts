@@ -76,45 +76,25 @@ define_reference_regions <- function() {
 
 
   ## Switzerland CHE ----
-  che <- ne_countries(
+  # che <- ne_countries(
+  #   scale = "medium",
+  #   country = "Switzerland",
+  #   returnclass = "sf"
+  # ) |>
+  #   st_transform(st_crs(wce_sf)) |>
+  #   transmute(region = "CHE")
+
+  ## All European countries ----
+  all_european_countries <- ne_countries(
     scale = "medium",
-    country = "Switzerland",
+    continent = "Europe",
     returnclass = "sf"
   ) |>
     st_transform(st_crs(wce_sf)) |>
-    transmute(region = "CHE")
+    transmute(region = adm0_iso) |>
+    filter(region != "RUS") # remove large country for computational reason
 
-
-  ## Bern ----
-  # Bern centre, buffered by 25 km in the Swiss projected CRS.
-  bern_radius_m <- 25000 # m
-
-  bern_geometry <- st_sfc(
-    st_point(c(7.4474, 46.9480)),
-    crs = 4326
-  ) |>
-    st_transform(2056) |>
-    st_buffer(bern_radius_m) |>
-    st_transform(st_crs(wce_sf))
-
-  bern <- st_sf(region = "BERN (25km)", geometry = bern_geometry)
-
-  ## Bern/Zollikofen ----
-  # Bern/Zollikofen centre, buffered by 25 km in the Swiss projected CRS.
-  zollikofen_radius <- 1000 # m
-
-  zollikofen_geometry <- st_sfc(
-    st_point(c(7.463994, 46.990768)),
-    crs = 4326
-  ) |>
-    st_transform(2056) |>
-    st_buffer(zollikofen_radius) |>
-    st_transform(st_crs(wce_sf))
-
-  zollikofen <- st_sf(region = "Bern/Zollikofen", geometry = zollikofen_geometry)
-
-
-  custom_regions_sf <- bind_rows(wce_e, wce_w, che, bern, zollikofen)
+  custom_regions_sf <- bind_rows(wce_e, wce_w, all_european_countries)
 
   # double check:
   # plot(custom_regions_sf)
