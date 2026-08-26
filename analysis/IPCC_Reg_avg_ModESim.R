@@ -15,7 +15,7 @@ library(here)
 library(sp)
 
 # Define what to run:
-flag_only_run_CHregion <- TRUE  # if TRUE, only runs CH, otherwise all regions (including CH)
+flag_only_run_CHregion <- FALSE  # if TRUE, only runs CH, otherwise all regions (including CH)
 
 # PREPARATION OF INPUT DATA:
 # see infos in /storage/capacity/occr_geco/data_2/archive_projects/MSc_2025_phelpap_cwdModESim/ModESim/README.md

@@ -15,10 +15,10 @@ library(here)
 library(sp)
 
 # Define what to run:
-flag_only_run_CHregion         <- TRUE  # if TRUE, only runs CH, otherwise all regions (including CH)
+flag_only_run_CHregion         <- FALSE  # if TRUE, only runs CH, otherwise all regions (including CH)
 
-#flag_only_run_2025_2026_update <- FALSE # if TRUE, only runs 2025/2026, otherwise only -2024
-flag_only_run_2025_2026_update <- TRUE # if TRUE, only runs 2025/2026, otherwise only -2024
+flag_only_run_2025_2026_update <- FALSE # if TRUE, only runs 2025/2026, otherwise only -2024
+#flag_only_run_2025_2026_update <- TRUE # if TRUE, only runs 2025/2026, otherwise only -2024
 
 
 # 1. Define FILEPATH as a string (Climate4R needs a string path)

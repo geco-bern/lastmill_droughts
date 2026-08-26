@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 # Define what to run:
-flag_only_run_CHregion <- TRUE  # if TRUE, only runs CH, otherwise all regions (including CH)
+flag_only_run_CHregion <- FALSE  # if TRUE, only runs CH, otherwise all regions (including CH)
 
 dir.create(here::here("figures/"))
 ```
@@ -1266,7 +1266,7 @@ MED_ERA5 <- ERA5_combined_26[["WCE_W"]] #regional_results_ERA5Land for 2025/2026
 
 #ModESim data
 #MED_MODE <- corrected_full[["WCE"]]
-# TODO: get working: MED_MODE <- corrected_full[["WCE_W"]]
+MED_MODE <- corrected_full[["WCE_W"]]
 
 #attach time dimension
 time_info_mode <- seq(from = as.numeric(1420), to = as.numeric(2009))
@@ -1274,15 +1274,15 @@ time_info_era <- seq(from = as.numeric(1970), to = as.numeric(2026))
 
 
 # Convert ModE dataset to long format
-# TODO: get working: MED_MODE_long <- MED_MODE %>%
-# TODO: get working:   as.data.frame() %>%
-# TODO: get working:   mutate(time = time_info_mode) %>%
-# TODO: get working:   pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
+MED_MODE_long <- MED_MODE %>%
+  as.data.frame() %>%
+  mutate(time = time_info_mode) %>%
+  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
 
 # Compute means
-# TODO: get working: MED_MODE_mean <- MED_MODE_long %>%
-# TODO: get working:   group_by(time) %>%
-# TODO: get working:   summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
+MED_MODE_mean <- MED_MODE_long %>%
+  group_by(time) %>%
+  summarise(PCWD = mean(PCWD, na.rm = TRUE), .groups = "drop")
 
 # Convert ERA5 dataset into long format
 MED_ERA5_df <- data.frame(time = time_info_era, PCWD = MED_ERA5)
@@ -1297,28 +1297,28 @@ baseline <- MED_ERA5[31:55] ##1970-1999
 fit_mod <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
 MED_era_mod_5yr <- round(as.numeric(extRemes::return.level(fit_mod, return.period = 5)))
 
-# TODO: get working:  baseline <- as.vector(MED_MODE[535:560,])  #1975-1999
-# TODO: get working:  fit_ref <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
-# TODO: get working:  MED_ModESim_ref_5yr <- round(as.numeric(extRemes::return.level(fit_ref, return.period = 5)))
+baseline <- as.vector(MED_MODE[535:560,])  #1975-1999
+fit_ref <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
+MED_ModESim_ref_5yr <- round(as.numeric(extRemes::return.level(fit_ref, return.period = 5)))
 
-# TODO: get working:  baseline <- as.vector(MED_MODE[1:534,])  #1420-1969
-# TODO: get working:  fit_full <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
-# TODO: get working:  MED_ModESim_full_5yr <- round(as.numeric(extRemes::return.level(fit_full, return.period = 5)))
+baseline <- as.vector(MED_MODE[1:534,])  #1420-1969
+fit_full <- extRemes::fevd(baseline, type = "Gumbel", method = "MLE", units = "years")
+MED_ModESim_full_5yr <- round(as.numeric(extRemes::return.level(fit_full, return.period = 5)))
 
 
 # 1) extract 1970-1999 of the wide matrix, then pivot
-# TODO: get working: MED_last60_long <- MED_MODE[(nrow(MED_MODE)-35):(nrow(MED_MODE)-10), ] %>%
-# TODO: get working:   as.data.frame() %>%
-# TODO: get working:   pivot_longer(cols = everything(),
-# TODO: get working:                names_to  = "ensemble",
-# TODO: get working:                values_to = "PCWD")
-# TODO: get working: 
-# TODO: get working: # Convert ModE dataset to long format 1420 - 1969
-# TODO: get working: MED_MODE_long_sel <- MED_MODE %>%
-# TODO: get working:   as.data.frame() %>%
-# TODO: get working:   mutate(time = time_info_mode) %>%
-# TODO: get working:   filter(time < 1975) %>%
-# TODO: get working:   pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
+MED_last60_long <- MED_MODE[(nrow(MED_MODE)-35):(nrow(MED_MODE)-10), ] %>%
+  as.data.frame() %>%
+  pivot_longer(cols = everything(),
+               names_to  = "ensemble",
+               values_to = "PCWD")
+
+# Convert ModE dataset to long format 1420 - 1969
+MED_MODE_long_sel <- MED_MODE %>%
+  as.data.frame() %>%
+  mutate(time = time_info_mode) %>%
+  filter(time < 1975) %>%
+  pivot_longer(cols = -time, names_to = "ensemble", values_to = "PCWD")
 
 # 1) extract last 60 rows of the wide matrix, then pivot
 MED_ERA5_long <- MED_ERA5[5:30] %>%
@@ -1335,25 +1335,25 @@ MED_ERA5_last30 <- MED_ERA5[31:55] %>%
 
 ggplot() +
   # full‑data density
-  # TODO: get working: geom_density(
-  # TODO: get working:   data    = MED_MODE_long_sel,
-  # TODO: get working:   aes(x   = PCWD,
-  # TODO: get working:   color   = factor("ModESim_fill_full"),
-  # TODO: get working:   fill    = factor("ModESim_fill_full")),
-  # TODO: get working:   alpha   = 0.8,
-  # TODO: get working:   linewidth    = 0.6,
-  # TODO: get working:   show.legend = TRUE
-  # TODO: get working: ) +
-  # TODO: get working: # last‑60 density
-  # TODO: get working: geom_density(
-  # TODO: get working:   data    = MED_last60_long,
-  # TODO: get working:   aes(x   = PCWD,
-  # TODO: get working:   color   = factor("ModESim_fill"),
-  # TODO: get working:   fill    = factor("ModESim_fill")),
-  # TODO: get working:   alpha   = 0.8,
-  # TODO: get working:   linewidth    = 0.6,
-  # TODO: get working:   show.legend = TRUE
-  # TODO: get working: ) +
+  geom_density(
+    data    = MED_MODE_long_sel,
+    aes(x   = PCWD,
+    color   = factor("ModESim_fill_full"),
+    fill    = factor("ModESim_fill_full")),
+    alpha   = 0.8,
+    linewidth    = 0.6,
+    show.legend = TRUE
+  ) +
+  # last‑60 density
+  geom_density(
+    data    = MED_last60_long,
+    aes(x   = PCWD,
+    color   = factor("ModESim_fill"),
+    fill    = factor("ModESim_fill")),
+    alpha   = 0.8,
+    linewidth    = 0.6,
+    show.legend = TRUE
+  ) +
     # first‑60 density
   geom_density(
     data    = MED_ERA5_long,
