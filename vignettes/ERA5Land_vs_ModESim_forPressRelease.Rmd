@@ -1748,11 +1748,24 @@ plot_CHE_ts <- plot_region_PCWD_ts("CHE")
 plot_CHE_den <- plot_region_PCWD_density("CHE")
 plot_CHE_den <- plot_CHE_den + theme(plot.margin = margin(t = 20, r = 0, b = 0, l = 0))
 
+# plot_WCE_ts + theme(legend.position = "bottom")
+# plot_WCE_E_ts + theme(legend.position = "bottom")
+# plot_WCE_W_ts + theme(legend.position = "bottom")
+# plot_CHE_ts + theme(legend.position = "bottom")
+# plot_WCE_den + theme(legend.position = "bottom")
+# plot_WCE_E_den + theme(legend.position = "bottom")
+# plot_WCE_W_den + theme(legend.position = "bottom")
+# plot_CHE_den + theme(legend.position = "bottom")
+
+#legend_a <- get_legend(plot_WCE_W_ts  + theme(legend.position = "bottom", legend.box.margin = margin(0, 0, 0, 12)))
+#legend_b <- get_legend(plot_WCE_W_den + theme(legend.position = "bottom", legend.box.margin = margin(0, 0, 0, 12)))
+
 combined2all <- plot_grid(
   plot_WCE_ts,  plot_WCE_den, 
   plot_WCE_E_ts,plot_WCE_E_den, 
   plot_WCE_W_ts,plot_WCE_W_den, 
   plot_CHE_ts,  plot_CHE_den,
+  # legend_a, legend_b, 
   ncol        = 2,
   align       = "h",
   axis        = "tb",
@@ -1772,6 +1785,7 @@ combined2all <- plot_grid(
   expand      = TRUE  
 )
 
+
 print(combined2all)
 
 ggsave(
@@ -1786,4 +1800,44 @@ ggsave(
 )
 ```
 
+```{r}
+# redo above plot with zoom into 2000's
+combined2all <- plot_grid(
+  plot_WCE_ts   + coord_cartesian(xlim = c(2000,2028)) + scale_x_continuous("Year",minor_breaks = c(2000:2028)) + theme_bw(), plot_WCE_den, 
+  plot_WCE_E_ts + coord_cartesian(xlim = c(2000,2028)) + scale_x_continuous("Year",minor_breaks = c(2000:2028)) + theme_bw(), plot_WCE_E_den, 
+  plot_WCE_W_ts + coord_cartesian(xlim = c(2000,2028)) + scale_x_continuous("Year",minor_breaks = c(2000:2028)) + theme_bw(), plot_WCE_W_den, 
+  plot_CHE_ts   + coord_cartesian(xlim = c(2000,2028)) + scale_x_continuous("Year",minor_breaks = c(2000:2028)) + theme_bw(), plot_CHE_den,
+  # legend_a, legend_b, 
+  ncol        = 2,
+  align       = "h",
+  axis        = "tb",
+  labels      = c(
+    "a) WCE – West Central Europe",  "e)", 
+    "b) WCE_E – Eastern half of WCE",  "f)", 
+    "c) WCE_W – Western half of WCE",  "g)", 
+    "d) CHE – Switzerland", "h)"
+  ),
+  # Push labels all the way to the left margin of each panel
+  label_x = 0.02,   # 0 = extreme left edge, a little bit of padding
+  hjust   = 0,      # left‑justify the label text
+  # Tweak vertical positioning if you like
+  label_y = 0.975,   # just below the top
+  vjust   = 1,       # align text at its top
+  rel_widths = c(2, 1),
+  expand      = TRUE  
+)
 
+
+print(combined2all)
+
+ggsave(
+  filename = here::here("figures/Annmax_PCWD_Timeseries_Density_WCEW_CHE_Fig_zoom2026.pdf"),
+  plot     = combined2all,
+  device   = cairo_pdf,    # better text rendering
+  width    = 10,           # in inches
+  height   = 13,       # in inches
+  units    = "in",
+  dpi      = 300,          # for raster elements (if any)
+  bg       = "white"       # white background
+)
+```
