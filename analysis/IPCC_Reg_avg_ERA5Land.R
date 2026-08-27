@@ -12,9 +12,21 @@ library(ncdf4)
 library(rnaturalearth)
 library(sf)
 library(here)
+library(sp)
+
+# Define what to run:
+flag_only_run_CHregion         <- FALSE  # if TRUE, only runs CH, otherwise all regions (including CH)
+
+flag_only_run_2025_2026_update <- FALSE # if TRUE, only runs 2025/2026, otherwise only -2024
+#flag_only_run_2025_2026_update <- TRUE # if TRUE, only runs 2025/2026, otherwise only -2024
+
 
 # 1. Define FILEPATH as a string (Climate4R needs a string path)
-nc_path <- here("data/ERA5Land_cons_PCWD_ANNMAX.nc")
+if (flag_only_run_2025_2026_update){
+  nc_path <- here("data/new_ERA5_PCWD_ANNMAX.nc")      # for 2025,2026
+} else {
+  nc_path <- here("data/ERA5Land_cons_PCWD_ANNMAX.nc") # for paper
+}
 
 ## read metadata variables using a temporary connection
 nc_pwcd  <- nc_open(nc_path)
@@ -58,15 +70,18 @@ grid$Data <- masked_array
 
 
 # 4. Reference Regions Setup ---------------------------------------------
-load(here::here("data", "Reference_regions", "IPCC-WGI-reference-regions-v4_R.rda"))
-refregions <- as(IPCC_WGI_reference_regions_v4, "SpatialPolygons")
-grid       <- setGridProj(grid = grid, proj = proj4string(refregions))
+source(here::here("analysis","define_reference_regions.R"))
+refregion_objects <- define_reference_regions()
 
-regions <- c("GIC", "NWN", "NEN", "WNA", "CNA", "ENA", "NCA", "SCA", "CAR", "NWS",
-             "NSA", "NES", "SAM", "SWS", "SES", "SSA", "NEU", "WCE", "EEU", "MED",
-             "SAH", "WAF", "CAF", "NEAF", "SEAF", "WSAF", "ESAF", "MDG", "RAR", "WSB",
-             "ESB", "RFE", "WCA", "ECA", "TIB", "EAS", "ARP", "SAS", "SEA", "NAU",
-             "CAU", "EAU", "SAU", "NZ")
+regions <- names(refregion_objects)
+# refregion_objects['WCE']
+# refregion_objects['WCE_W'] # new regions
+# refregion_objects['WCE_W'] # new regions
+# refregion_objects['CHE'] # new regions
+
+
+grid <- setGridProj(grid = grid, proj = proj4string(refregion_objects[[1]]))
+
 
 ########## for ERA5Land ###########################
 regional_results <- list()
@@ -74,10 +89,15 @@ regional_results <- list()
 # Get the total number of time steps from your main grid object
 total_time_steps <- dim(grid$Data)[1]
 
-for (region in regions) {
+if (flag_only_run_CHregion){
+  regions_to_loop <- c("CHE","WCE_W","WCE") # only subset
+} else {
+  regions_to_loop <- regions # all, including CHE, WCE_W, etc..
+}
+for (region in regions_to_loop) {
   message("Processing region: ", region)
 
-  region_object <- refregions[c(region)]
+  region_object <- refregion_objects[[region]]
   if (is.null(region_object)) {
     warning(paste("Region not found:", region))
     next
@@ -100,6 +120,19 @@ for (region in regions) {
   region_data <- grid_region$Data
   data_dims   <- dim(region_data)
 
+  # SAFETY CHECK: ensure region is large enough:
+  n_valid_cells <- max(
+    apply(!is.na(region_data), 1, sum),
+    na.rm = TRUE
+  )
+
+  message(region, ": ", n_valid_cells, " contributing grid cells")
+
+  if (!is.finite(n_valid_cells) || n_valid_cells == 0) {
+    regional_results[[region]] <- rep(NA_real_, total_time_steps)
+    next
+  }
+
   # CRITICAL SAFETY CHECK 2: Ensure the data is actually 3D [Time, Lat, Lon]
   # If it collapsed to less than 3 dimensions, there are no valid grid cells.
   if (length(data_dims) < 3 || any(data_dims[2:3] == 0)) {
@@ -120,8 +153,38 @@ for (region in regions) {
   # Store the direct numeric vector into your tracking list
   regional_results[[region]] <- spatial_avg
 }
-#save calculated list
-saveRDS(regional_results, file=(here("data/regionalResults_ERA5Land_cons.RData"))) #conservatively remapped ERA5Land
+# OUTPUT WAS:
+#     [...]
+#     SAU: 45 contributing grid cells
+#     Processing region: NZ
+#     NZ: 10 contributing grid cells
+#     Processing region: WCE_E
+#     WCE_E: 93 contributing grid cells
+#     Processing region: WCE_W
+#     WCE_W: 31 contributing grid cells
+#     Processing region: CHE
+#     CHE: 1 contributing grid cells
+#     Processing region: BERN (25km)
+#     BERN (25km): 0 contributing grid cells
+#     Processing region: Bern/Zollikofen
+#     Bern/Zollikofen: 0 contributing grid cells
+
+#save calculated list (note run once for base data and once again for 25_26 data)
+if (flag_only_run_CHregion){
+  if (flag_only_run_2025_2026_update){
+    saveRDS(regional_results, file=(here("data/regionalResults_CH_only_ERA5Land_cons_25_26.RData"))) # for 2025,2026,newRegion
+  } else {
+    saveRDS(regional_results, file=(here("data/regionalResults_CH_only_ERA5Land_cons.RData")))       # for old-period,newRegion
+  }
+} else {
+  if (flag_only_run_2025_2026_update){
+    saveRDS(regional_results, file=(here("data/regionalResults_ERA5Land_cons_25_26.RData"))) # for 2025,2026
+  } else {
+    saveRDS(regional_results, file=(here("data/regionalResults_ERA5Land_cons.RData")))       # for paper
+  }
+}
+
+
 
 ## check grid alignment
 # Load relevant libraries
@@ -195,62 +258,62 @@ ggplot() +
   guides(fill = guide_colorbar(title = "PCWD (mm)"))
 
 
-### Compare bilinear and conservatively interpolated PCWD
-
-regional_results_ERA5Land_bil <- readRDS(here("data/regionalResults_ERA5Land.RData")) #1950 - 2024
-### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
-regional_results_ERA5Land_bil <- lapply(regional_results_ERA5Land_bil, function(x) x[21:75])
-
-
-regional_results_ERA5Land_con <- readRDS(here("data/regionalResults_ERA5Land_cons.RData")) #1950 - 2024
-### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
-regional_results_ERA5Land_con <- lapply(regional_results_ERA5Land_con, function(x) x[21:75])
-
-
-library(ggplot2)
-library(tidyr)
-library(dplyr)
-
-# 1. Define the correct year sequence (indices 21:75 map to 1970:2024)
-years_vector <- 1970:2024
-
-# 2. Extract the MED vectors from both lists
-med_bil <- regional_results_ERA5Land_bil[["CAU"]]
-med_con <- regional_results_ERA5Land_con[["CAU"]]
-
-# 3. Create a combined dataframe structured for ggplot
-plot_df <- data.frame(
-  Year = years_vector,
-  Bilinear = med_bil,
-  Conservative = med_con
-) |>
-  # Reshape data into long format for clean plotting aesthetics
-  pivot_longer(
-    cols = c(Bilinear, Conservative),
-    names_to = "Remapping_Method",
-    values_to = "PCWD"
-  )
-
-# 4. Generate the Time-Series Comparison Plot
-ggplot(plot_df, aes(x = Year, y = PCWD, color = Remapping_Method, linetype = Remapping_Method)) +
-  geom_line(lwd = 1) +
-  geom_point(size = 1.5) +
-  # Custom aesthetic layout adjustments
-  scale_color_manual(values = c("Bilinear" = "#1f77b4", "Conservative" = "#ff7f0e")) +
-  scale_linetype_manual(values = c("Bilinear" = "solid", "Conservative" = "dashed")) +
-  labs(
-    title = "ERA5-Land PCWD Comparison: Central Australia Region (CAU)",
-    subtitle = "Comparing Bilinear vs. Conservative Remapping Schemes (1970–2024)",
-    x = "Year",
-    y = "Potential Cumulative Water Deficit (mm)",
-    color = "Remapping Method",
-    linetype = "Remapping Method"
-  ) +
-  theme_classic(base_size = 13) +
-  theme(
-    legend.position = "bottom",
-    plot.title = element_text(face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5, color = "gray30"),
-    panel.grid.major.y = element_line(color = "gray90") # Easier to read historical variance
-  ) +
-  scale_x_continuous(breaks = seq(1970, 2024, by = 5))
+# ### Compare bilinear and conservatively interpolated PCWD
+#
+# regional_results_ERA5Land_bil <- readRDS(here("data/regionalResults_ERA5Land.RData")) #1950 - 2024   # TODO: missing data/regionalResults_ERA5Land.RData
+# ### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
+# regional_results_ERA5Land_bil <- lapply(regional_results_ERA5Land_bil, function(x) x[21:75])
+#
+#
+# regional_results_ERA5Land_con <- readRDS(here("data/regionalResults_ERA5Land_cons.RData")) #1950 - 2024 # TODO: create data/regionalResults_ERA5Land_cons.RData
+# ### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
+# regional_results_ERA5Land_con <- lapply(regional_results_ERA5Land_con, function(x) x[21:75])
+#
+#
+# library(ggplot2)
+# library(tidyr)
+# library(dplyr)
+#
+# # 1. Define the correct year sequence (indices 21:75 map to 1970:2024)
+# years_vector <- 1970:2024
+#
+# # 2. Extract the MED vectors from both lists
+# med_bil <- regional_results_ERA5Land_bil[["CAU"]]
+# med_con <- regional_results_ERA5Land_con[["CAU"]]
+#
+# # 3. Create a combined dataframe structured for ggplot
+# plot_df <- data.frame(
+#   Year = years_vector,
+#   Bilinear = med_bil,
+#   Conservative = med_con
+# ) |>
+#   # Reshape data into long format for clean plotting aesthetics
+#   pivot_longer(
+#     cols = c(Bilinear, Conservative),
+#     names_to = "Remapping_Method",
+#     values_to = "PCWD"
+#   )
+#
+# # 4. Generate the Time-Series Comparison Plot
+# ggplot(plot_df, aes(x = Year, y = PCWD, color = Remapping_Method, linetype = Remapping_Method)) +
+#   geom_line(lwd = 1) +
+#   geom_point(size = 1.5) +
+#   # Custom aesthetic layout adjustments
+#   scale_color_manual(values = c("Bilinear" = "#1f77b4", "Conservative" = "#ff7f0e")) +
+#   scale_linetype_manual(values = c("Bilinear" = "solid", "Conservative" = "dashed")) +
+#   labs(
+#     title = "ERA5-Land PCWD Comparison: Central Australia Region (CAU)",
+#     subtitle = "Comparing Bilinear vs. Conservative Remapping Schemes (1970–2024)",
+#     x = "Year",
+#     y = "Potential Cumulative Water Deficit (mm)",
+#     color = "Remapping Method",
+#     linetype = "Remapping Method"
+#   ) +
+#   theme_classic(base_size = 13) +
+#   theme(
+#     legend.position = "bottom",
+#     plot.title = element_text(face = "bold", hjust = 0.5),
+#     plot.subtitle = element_text(hjust = 0.5, color = "gray30"),
+#     panel.grid.major.y = element_line(color = "gray90") # Easier to read historical variance
+#   ) +
+#   scale_x_continuous(breaks = seq(1970, 2024, by = 5))
