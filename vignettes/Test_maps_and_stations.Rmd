@@ -1,0 +1,628 @@
+---
+title: "Test_maps_and_stations"
+author: "Patricia Helpap"
+date: "2024-11-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r libraries, message=FALSE, echo=FALSE}
+#load all necessary libraries
+library(readr)
+library(dplyr)
+library(here)
+library(lubridate)
+library(patchwork)
+library(extRemes)
+library(ggplot2)
+library(cwd)
+library(ncdf4)
+library(readr)
+library(reshape2)
+library(ggpubr)
+library(maps)
+library(raster)
+library(rnaturalearth)
+library(sf)
+```
+
+## Global PCWD from one ensemble member calculated using *10mm* absolute threshold
+
+
+```{r read data from netcdf, echo=FALSE}
+##read in data - stored on Ubelix server
+input_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850_AbsTrsh/PCWD_ANNMAX.nc"
+nc_pwcd_1850 <- nc_open(input_file)
+pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")
+lon = ncvar_get(nc_pwcd_1850, varid="lon")
+lat = ncvar_get(nc_pwcd_1850, varid="lat")
+time = ncvar_get(nc_pwcd_1850, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates <- reference_date + time
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1850)
+
+```
+
+```{r plot pcwd values from 1850, echo=FALSE}
+# Extract the first year's data
+first_year_data <- pcwd_annmax_1850[, , 1]
+
+# Extract data for the first 30 years (assuming time dimension is the 3rd)
+first_30_years_data <- pcwd_annmax_1850[,,1:30]
+last_30_years_data <- pcwd_annmax_1850[,,131:160]
+overall_avg_data10 <- pcwd_annmax_1850[,,1:160]
+
+# Calculate the mean for each grid cell over the first 30 years
+# Calculate the mean along the time dimension (3rd dimension) for each grid cell
+mean_data1 <- apply(first_30_years_data, c(2, 1), mean, na.rm = TRUE)
+mean_data2 <- apply(last_30_years_data, c(2, 1), mean, na.rm = TRUE)
+diff_data <- mean_data2-mean_data1
+overall_avg10 <- apply(overall_avg_data10, c(2, 1), mean, na.rm = TRUE)
+
+```
+
+Convert data to raster object for plotting
+```{r prep data for plotting 1850, echo=FALSE}
+# Convert first year's data into a raster object
+r <- raster(t(first_year_data), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')  # Flip the raster to correct orientation
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+```
+
+```{r customise aestetics for plotting, echo=FALSE}
+# Define custom color bins
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249", 
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f", 
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+# Define the numeric labels for the breaks
+break_labels <- c(as.character(scales::label_number(accuracy = 1)(custom_bins[-length(custom_bins)])), "Ocean")
+```
+
+```{r plot showing 1850, echo=FALSE, fig.show='hide'}
+ggplot() +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "PCWD ANNMAX", values = custom_colors, na.value = "lightgrey", 
+                    labels = c(levels(cut(r_df$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "PCWD ANNMAX for First Year", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(legend.title = element_text(size = 12),  # Adjust legend title size
+        legend.text = element_text(size = 10)) +  # Adjust legend text size
+  guides(fill = guide_legend(title = "PCWD ANNMAX", reverse = TRUE))  # Adjust legend for better presentation
+```
+
+
+```{r prep data for first 30 years, echo=FALSE}
+# Convert to raster
+r_mean <- raster(mean_data1, xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r_mean) <- "+proj=longlat +datum=WGS84"
+r_mean <- flip(r_mean, direction='y')
+
+r_masked_mean <- mask(r_mean, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df_mean <- as.data.frame(r_masked_mean, xy = TRUE)
+colnames(r_df_mean) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+```
+
+#### First 30 year mean
+```{r plot showing 1850-1880, echo=FALSE}
+ggplot() +
+  geom_raster(data = r_df_mean, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "PCWD ANNMAX", values = custom_colors, na.value = "lightgrey", 
+                    labels = c(levels(cut(r_df_mean$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "Mean PCWD ANNMAX 1850-1880", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(legend.title = element_text(size = 12),  # Adjust legend title size
+        legend.text = element_text(size = 10)) +  # Adjust legend text size
+  guides(fill = guide_legend(title = "PCWD ANNMAX", reverse = TRUE))  # Adjust legend for better presentation
+
+```
+
+```{r prep data for last 30 years}
+# Convert to raster
+r_mean <- raster(mean_data2, xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r_mean) <- "+proj=longlat +datum=WGS84"
+r_mean <- flip(r_mean, direction='y')
+
+r_masked_mean <- mask(r_mean, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df_mean <- as.data.frame(r_masked_mean, xy = TRUE)
+colnames(r_df_mean) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+```
+
+#### Last 30 year mean
+```{r plot showing 1979-2009}
+ggplot() +
+  geom_raster(data = r_df_mean, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "PCWD ANNMAX", values = custom_colors, na.value = "lightgrey", 
+                    labels = c(levels(cut(r_df_mean$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "Mean PCWD ANNMAX 1979-2009", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(legend.title = element_text(size = 12),  # Adjust legend title size
+        legend.text = element_text(size = 10)) +  # Adjust legend text size
+  guides(fill = guide_legend(title = "PCWD ANNMAX", reverse = TRUE))  # Adjust legend for better presentation
+
+```
+
+
+```{r prep data for difference in periods}
+# Convert to raster
+r_diff <- raster(diff_data, xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r_diff) <- "+proj=longlat +datum=WGS84"
+r_diff <- flip(r_diff, direction='y')
+
+r_masked_diff <- mask(r_diff, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df_diff <- as.data.frame(r_masked_diff, xy = TRUE)
+colnames(r_df_diff) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+```
+
+#### Difference between last 30 years and first 30 years
+```{r plot showing differences}
+# Plot using ggplot2
+custom_bins <- c(-Inf,-100, -50, -20, -10, -1, 0, 1, 10, 20, 50, 100,Inf)  # Define breaks based on data range
+# Create a 10-color scale from blue to white to red
+custom_colors <- colorRampPalette(c("blue", "white", "red"))(13)
+
+ggplot() +
+  geom_raster(data = r_df_diff, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "PCWD ANNMAX", values = custom_colors, na.value = "lightgrey", 
+                    labels = c(levels(cut(r_df_diff$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "[1979-2009] - [1850-1880]", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(legend.title = element_text(size = 12),  # Adjust legend title size
+        legend.text = element_text(size = 10)) +  # Adjust legend text size
+  guides(fill = guide_legend(title = "PCWD ANNMAX", reverse = TRUE))  # Adjust legend for better presentation
+
+
+```
+
+## Global PCWD from one ensemble member calculated using *30mm* absolute threshold
+
+```{r read data from netcdf 2, echo=FALSE}
+##read in data
+input_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850_AbsTrsh_30/PCWD_ANNMAX.nc"
+nc_pwcd_1850 <- nc_open(input_file)
+pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")
+lon = ncvar_get(nc_pwcd_1850, varid="lon")
+lat = ncvar_get(nc_pwcd_1850, varid="lat")
+time = ncvar_get(nc_pwcd_1850, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates <- reference_date + time
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1850)
+
+```
+
+```{r plot pcwd values from 1850 2, echo=FALSE}
+
+# Extract the first year's data
+first_year_data <- pcwd_annmax_1850[, , 1]
+
+# Extract data for the first 30 years (assuming time dimension is the 3rd)
+first_30_years_data <- pcwd_annmax_1850[,,1:30]
+last_30_years_data <- pcwd_annmax_1850[,,131:160]
+overall_avg_data30 <- pcwd_annmax_1850[,,1:160]
+
+# Calculate the mean for each grid cell over the first 30 years
+# Calculate the mean along the time dimension (3rd dimension) for each grid cell
+mean_data1 <- apply(first_30_years_data, c(2, 1), mean, na.rm = TRUE)
+mean_data2 <- apply(last_30_years_data, c(2, 1), mean, na.rm = TRUE)
+diff_data <- mean_data2 - mean_data1
+overall_avg30 <- apply(overall_avg_data30, c(2, 1), mean, na.rm = TRUE)
+overall_avg_diff <- overall_avg10 - overall_avg30
+```
+
+```{r prep data for plotting 1850 2, echo=FALSE}
+# Convert first year's data into a raster object
+r <- raster(t(first_year_data), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r) <- "+proj=longlat +datum=WGS84"  # Set CRS for raster
+r <- flip(r, direction='y')  # Flip the raster to correct orientation
+
+# Retrieve land polygons and set the same CRS as the raster
+land <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_transform(land, crs = st_crs(r))  # Ensure CRS alignment
+
+# Mask the raster with land polygons to remove ocean values
+r_masked <- mask(r, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df <- as.data.frame(r_masked, xy = TRUE)
+colnames(r_df) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+```
+
+```{r customise aestetics for plotting 2, echo=FALSE}
+# Define custom color bins
+custom_bins <- c(0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 700, 900, 1200, 2000, Inf)  # Define breaks based on data range
+# Define a custom 13-color palette from deep turquoise to bright pink with earthy tones in between
+# Updated custom color palette with two additional colors
+custom_colors <- c("#004f5a",  # New color: a darker turquoise at the beginning
+                   "#006d75", "#1a9e96", "#55c1ab", "#85c68b", "#d1c54b", "#e8b249", 
+                   "#e3842a", "#d45321", "#ba2e1f", "#9e2d2a", "#803c3d", "#63363f", 
+                   "#9c276e",  # New color: a deeper shade in the pink tones
+                   "#d238a5")
+
+# Define the numeric labels for the breaks
+break_labels <- c(as.character(scales::label_number(accuracy = 1)(custom_bins[-length(custom_bins)])), "Ocean")
+```
+
+```{r prep data for first 30 years 2, echo=FALSE}
+# Convert to raster
+r_mean <- raster(mean_data1, xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r_mean) <- "+proj=longlat +datum=WGS84"
+r_mean <- flip(r_mean, direction='y')
+
+r_masked_mean <- mask(r_mean, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df_mean <- as.data.frame(r_masked_mean, xy = TRUE)
+colnames(r_df_mean) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+```
+
+#### First 30 year mean
+```{r plot showing 1850-1880 2}
+ggplot() +
+  geom_raster(data = r_df_mean, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "PCWD ANNMAX", values = custom_colors, na.value = "lightgrey", 
+                    labels = c(levels(cut(r_df_mean$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "Mean PCWD ANNMAX 1850-1880", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(legend.title = element_text(size = 12),  # Adjust legend title size
+        legend.text = element_text(size = 10)) +  # Adjust legend text size
+  guides(fill = guide_legend(title = "PCWD ANNMAX", reverse = TRUE))  # Adjust legend for better presentation
+
+```
+
+```{r prep data for last 30 years 2}
+# Convert to raster
+r_mean <- raster(mean_data2, xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r_mean) <- "+proj=longlat +datum=WGS84"
+r_mean <- flip(r_mean, direction='y')
+
+r_masked_mean <- mask(r_mean, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df_mean <- as.data.frame(r_masked_mean, xy = TRUE)
+colnames(r_df_mean) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+```
+
+#### Last 30 year mean
+```{r plot showing 1979-2009 2}
+ggplot() +
+  geom_raster(data = r_df_mean, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "PCWD ANNMAX", values = custom_colors, na.value = "lightgrey", 
+                    labels = c(levels(cut(r_df_mean$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "Mean PCWD ANNMAX 1979-2009", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(legend.title = element_text(size = 12),  # Adjust legend title size
+        legend.text = element_text(size = 10)) +  # Adjust legend text size
+  guides(fill = guide_legend(title = "PCWD ANNMAX", reverse = TRUE))  # Adjust legend for better presentation
+
+```
+
+```{r prep data for difference in periods 2}
+# Convert to raster
+r_diff <- raster(diff_data, xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r_diff) <- "+proj=longlat +datum=WGS84"
+r_diff <- flip(r_diff, direction='y')
+
+r_masked_diff <- mask(r_diff, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df_diff <- as.data.frame(r_masked_diff, xy = TRUE)
+colnames(r_df_diff) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+```
+
+
+#### Difference between last 30 years and first 30 years
+```{r plot showing differences 2}
+# Plot using ggplot2
+custom_bins <- c(-Inf,-100, -50, -20, -10, -1, 0, 1, 10, 20, 50,100, Inf)  # Define breaks based on data range
+# Create a 10-color scale from blue to white to red
+custom_colors <- colorRampPalette(c("blue", "white", "red"))(13)
+
+ggplot() +
+  geom_raster(data = r_df_diff, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "PCWD ANNMAX", values = custom_colors, na.value = "lightgrey", 
+                    labels = c(levels(cut(r_df_diff$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(title = "[1979-2009] - [1850-1880]", x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(legend.title = element_text(size = 12),  # Adjust legend title size
+        legend.text = element_text(size = 10)) +  # Adjust legend text size
+  guides(fill = guide_legend(title = "PCWD ANNMAX", reverse = TRUE))  # Adjust legend for better presentation
+
+
+```
+
+
+## Comparison of methods
+### Showing spatial difference in using *10mm* vs *30mm* on full period mean values
+- full period mean *10mm* - full period mean *30mm*:
+
+```{r prep data for difference in means between methods}
+# Convert to raster
+r_avg_diff <- raster(overall_avg_diff, xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+crs(r_avg_diff) <- "+proj=longlat +datum=WGS84"
+r_avg_diff <- flip(r_avg_diff, direction='y')
+
+r_masked_avg_diff <- mask(r_avg_diff, as(land, "Spatial"))
+
+# Convert the masked raster to a data frame for ggplot2
+r_df_avg_diff <- as.data.frame(r_masked_avg_diff, xy = TRUE)
+colnames(r_df_avg_diff) <- c("x", "y", "layer")  # Rename columns to match ggplot expectations
+
+```
+
+```{r plot showing difference in means}
+# Plot using ggplot2
+custom_bins <- c(-Inf,-100, -50, -20, -10, -1, 0, 1, 10, 20, 50,100, Inf)  # Define breaks based on data range
+custom_colors <- colorRampPalette(c("blue", "white", "red"))(13)
+
+ggplot() +
+  geom_raster(data = r_df_avg_diff, aes(x = x, y = y, fill = cut(layer, breaks = custom_bins)), na.rm = TRUE) +
+  scale_fill_manual(name = "PCWD ANNMAX", values = custom_colors, na.value = "lightgrey", 
+                    labels = c(levels(cut(r_df_avg_diff$layer, breaks = custom_bins)),"Ocean")) +  # Label ocean
+  labs(x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  geom_sf(data = land, fill = NA, color = "black", lwd = 0.5) +
+  coord_sf(xlim = range(lon), ylim = range(lat), expand = FALSE) +
+  theme(legend.title = element_text(size = 12),  # Adjust legend title size
+        legend.text = element_text(size = 10)) +  # Adjust legend text size
+  guides(fill = guide_legend(title = "PCWD ANNMAX", reverse = TRUE))  # Adjust legend for better presentation
+
+
+```
+
+## Comparison of different methods for selected sites (see Patricia Gribi BSc Thesis)
+m001 1850 sets, PCWD calculated
+- with relative threshold (1850)
+- with absolute threshold of 10mm (AT)
+- with absolute threshold of 30mm (AT_30)
+
+```{r read in set data}
+
+##read in data from m001 1850 set
+input_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850/PCWD_ANNMAX.nc"
+nc_pwcd_1850 <- nc_open(input_file)
+pcwd_annmax_1850 = ncvar_get(nc_pwcd_1850, varid="pcwd_annmax")
+lon = ncvar_get(nc_pwcd_1850, varid="lon")
+lat = ncvar_get(nc_pwcd_1850, varid="lat")
+time_1850 = ncvar_get(nc_pwcd_1850, varid="time")
+# Convert to actual dates (days since 2001-01-01)
+reference_date <- as.Date("2001-01-01")
+time_dates_1850 <- reference_date + time_1850
+
+# # Print the resulting dates
+# print(time_dates)
+
+nc_close(nc_pwcd_1850)
+melt_pcwd_annmax_1850 <- melt(pcwd_annmax_1850, varnames = c("lat", "lon", "time"), value.name = "pcwd_annmax")
+
+
+##read in data from m001 1850 set -- ABSOLUTE THRESHOLD CWD 10mm
+input_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850_AbsTrsh/PCWD_ANNMAX.nc"
+nc_pwcd_1850_AT <- nc_open(input_file)
+pcwd_annmax_1850_AT = ncvar_get(nc_pwcd_1850_AT, varid="pcwd_annmax")
+
+nc_close(nc_pwcd_1850_AT)
+melt_pcwd_annmax_1850_AT <- melt(pcwd_annmax_1850_AT, varnames = c("lat", "lon", "time"), value.name = "pcwd_annmax")
+
+
+##read in data from m001 1850 set -- ABSOLUTE THRESHOLD CWD 10mm
+input_file <- "/storage/research/giub_geco/data_2/scratch/phelpap/ModESim/m001_tidy/04_result_1850_AbsTrsh_30/PCWD_ANNMAX.nc"
+nc_pwcd_1850_AT_30 <- nc_open(input_file)
+pcwd_annmax_1850_AT_30 = ncvar_get(nc_pwcd_1850_AT_30, varid="pcwd_annmax")
+
+nc_close(nc_pwcd_1850_AT_30)
+melt_pcwd_annmax_1850_AT_30 <- melt(pcwd_annmax_1850_AT_30, varnames = c("lat", "lon", "time"), value.name = "pcwd_annmax")
+
+```
+
+```{r build dataframes for sites, echo=FALSE}
+#used stations used in Patricia Gribis Bachelor thesis 
+####################Russian site
+
+time_AT <- c(1850:2009)
+# Find the index of the closest latitude to 71.2
+lat_index <- which.min(abs(as.numeric(lat) - 71.2))
+lon_index <- which.min(abs(as.numeric(lon) - 111.25))
+Russia_1850 <- pcwd_annmax_1850[lon_index,lat_index,1:160]
+Russia_1850_AT <- pcwd_annmax_1850_AT[lon_index,lat_index,1:160]
+Russia_1850_AT_30 <- pcwd_annmax_1850_AT_30[lon_index,lat_index,1:160]
+
+# Prepend NAs to the shorter list
+Russia_AT_df <- data.frame(time_AT, Russia_1850_AT, Russia_1850_AT_30, Russia_1850)
+
+
+
+####################Algeria site
+lat_index <- which.min(abs(as.numeric(lat) - 28.7))
+lon_index <- which.min(abs(as.numeric(lon) - 3.75))
+Algeria_1850<- pcwd_annmax_1850[lon_index,lat_index,1:160]
+Algeria_1850_AT<- pcwd_annmax_1850_AT[lon_index,lat_index,1:160]
+Algeria_1850_AT_30<- pcwd_annmax_1850_AT_30[lon_index,lat_index,1:160]
+
+Algeria_AT_df <- data.frame(time_AT, Algeria_1850_AT, Algeria_1850_AT_30, Algeria_1850)
+
+
+####################Antarctica site
+lat_index <- which.min(abs(as.numeric(lat) - -81.5))
+lon_index <- which.min(abs(as.numeric(lon) - 55))
+Antarctica_1850<- pcwd_annmax_1850[lon_index,lat_index,1:160]
+Antarctica_1850_AT<- pcwd_annmax_1850_AT[lon_index,lat_index,1:160]
+Antarctica_1850_AT_30<- pcwd_annmax_1850_AT_30[lon_index,lat_index,1:160]
+
+# Prepend NAs to the shorter list
+Antarctica_AT_df <- data.frame(time_AT, Antarctica_1850_AT, Antarctica_1850_AT_30, Antarctica_1850)
+
+
+####################Czechia site
+lat_index <- which.min(abs(as.numeric(lat) - 50.4))
+lon_index <- which.min(abs(as.numeric(lon) - 13.75))
+Czechia_1850<- pcwd_annmax_1850[lon_index,lat_index,1:160]
+Czechia_1850_AT<- pcwd_annmax_1850_AT[lon_index,lat_index,1:160]
+Czechia_1850_AT_30<- pcwd_annmax_1850_AT_30[lon_index,lat_index,1:160]
+
+Czechia_AT_df <- data.frame(time_AT, Czechia_1850_AT, Czechia_1850_AT_30, Czechia_1850)
+
+
+####################Brazil site
+lat_index <- which.min(abs(as.numeric(lat) - -7))
+lon_index <- which.min(abs(as.numeric(lon) - -52.5))
+Brazil_1850<- pcwd_annmax_1850[lon_index,lat_index,1:160]
+Brazil_1850_AT<- pcwd_annmax_1850_AT[lon_index,lat_index,1:160]
+Brazil_1850_AT_30<- pcwd_annmax_1850_AT_30[lon_index,lat_index,1:160]
+
+Brazil_AT_df <- data.frame(time_AT, Brazil_1850_AT, Brazil_1850_AT_30, Brazil_1850)
+
+```
+
+```{r showing individual sites RT vs AT m001 for explicit sites}
+Russia <- ggplot() +
+  geom_line(data = Russia_AT_df, aes(x = time_AT, y = Russia_1850_AT, color = "Russia 1850_AT")) +
+  geom_line(data = Russia_AT_df, aes(x = time_AT, y = Russia_1850, color = "Russia 1850")) +
+  geom_line(data = Russia_AT_df, aes(x = time_AT, y = Russia_1850_AT_30, color = "Russia 1850_AT_30")) +
+  theme_classic() +
+  ylim(0, max(Russia_AT_df$Russia_1850)) +
+  xlim(min(Russia_AT_df$time), max(Russia_AT_df$time)) +
+  labs(
+    x = "Year", 
+    y = "PCWD(mm)",
+    color = "Legend"
+  ) +
+  scale_color_manual(values = c("Russia 1850_AT" = "red", "Russia 1850" = "darkred","Russia 1850_AT_30" = "coral","Algeria 1850_AT" = "blue", "Algeria 1850" = "darkblue", "Antarctica 1850_AT" = "darkslategray4", "Antarctica 1850" = "darkslategray", "Brazil 1850_AT" = "green", "Brazil 1850" = "darkgreen", "Czechia 1850_AT" = "yellow", "Czechia 1850" = "gold"))
+
+Brazil <- ggplot() +
+  geom_line(data = Brazil_AT_df, aes(x = time_AT, y = Brazil_1850_AT, color = "Brazil 1850_AT")) +
+  geom_line(data = Brazil_AT_df, aes(x = time_AT, y = Brazil_1850, color = "Brazil 1850")) +
+    geom_line(data = Brazil_AT_df, aes(x = time_AT, y = Brazil_1850_AT_30, color = "Brazil 1850_AT_30")) +
+  theme_classic() +
+  ylim(0, max(Brazil_AT_df$Brazil_1850)) +
+  xlim(min(Brazil_AT_df$time), max(Brazil_AT_df$time)) +
+  labs(
+    x = "Year", 
+    y = "PCWD (mm)",
+    color = "Legend"
+  ) +
+  scale_color_manual(values = c("Russia 1850_AT" = "red", "Russia 1850" = "darkred","Algeria 1850_AT" = "blue", "Algeria 1850" = "darkblue", "Antarctica 1850_AT" = "darkslategray4", "Antarctica 1850" = "darkslategray", "Brazil 1850_AT_30" = "darkkhaki","Brazil 1850_AT" = "green", "Brazil 1850" = "darkgreen", "Czechia 1850_AT" = "yellow", "Czechia 1850" = "gold"))
+
+Algeria <- ggplot() +
+  geom_line(data = Algeria_AT_df, aes(x = time_AT, y = Algeria_1850_AT, color = "Algeria 1850_AT")) +
+  geom_line(data = Algeria_AT_df, aes(x = time_AT, y = Algeria_1850, color = "Algeria 1850")) +
+    geom_line(data = Algeria_AT_df, aes(x = time_AT, y = Algeria_1850_AT_30, color = "Algeria 1850_AT_30")) +
+  theme_classic() +
+  ylim(0, max(Algeria_AT_df$Algeria_1850_AT)) +
+  xlim(min(Algeria_AT_df$time), max(Algeria_AT_df$time)) +
+  labs(
+    x = "Year", 
+    y = "PCWD(mm)",
+    color = "Legend"
+  ) +
+  scale_color_manual(values = c("Russia 1850_AT" = "red", "Russia 1850" = "darkred","Algeria 1850_AT" = "deepskyblue","Algeria 1850_AT_30" = "darkslategray", "Algeria 1850" = "deepskyblue4", "Antarctica 1850_AT" = "darkslategray4", "Antarctica 1850" = "darkslategray", "Brazil 1850_AT" = "green", "Brazil 1850" = "darkgreen", "Czechia 1850_AT" = "yellow", "Czechia 1850" = "gold"))
+
+Czechia <- ggplot() +
+  geom_line(data = Czechia_AT_df, aes(x = time_AT, y = Czechia_1850_AT, color = "Czechia 1850_AT")) +
+  geom_line(data = Czechia_AT_df, aes(x = time_AT, y = Czechia_1850, color = "Czechia 1850")) +
+    geom_line(data = Czechia_AT_df, aes(x = time_AT, y = Czechia_1850_AT_30, color = "Czechia 1850_AT_30")) +
+  theme_classic() +
+  ylim(0, max(Czechia_AT_df$Czechia_1850)) +
+  xlim(min(Czechia_AT_df$time), max(Czechia_AT_df$time)) +
+  labs(
+    x = "Year", 
+    y = "PCWD (mm)",
+    color = "Legend"
+  ) +
+  scale_color_manual(values = c("Russia 1850_AT" = "red", "Russia 1850" = "darkred","Algeria 1850_AT" = "blue", "Algeria 1850" = "darkblue", "Antarctica 1850_AT" = "darkslategray4", "Antarctica 1850" = "darkslategray", "Brazil 1850_AT" = "green", "Brazil 1850" = "darkgreen", "Czechia 1850_AT" = "yellow", "Czechia 1850" = "gold", "Czechia 1850_AT_30" = "darkgoldenrod4"))
+
+Antarctica <- ggplot() +
+  geom_line(data = Antarctica_AT_df, aes(x = time_AT, y = Antarctica_1850_AT, color = "Antarctica 1850_AT")) +
+  geom_line(data = Antarctica_AT_df, aes(x = time_AT, y = Antarctica_1850, color = "Antarctica 1850")) +
+    geom_line(data = Antarctica_AT_df, aes(x = time_AT, y = Antarctica_1850_AT_30, color = "Antarctica 1850_AT_30")) +
+  theme_classic() +
+  ylim(0, max(Antarctica_AT_df$Antarctica_1850)) +
+  xlim(min(Antarctica_AT_df$time), max(Antarctica_AT_df$time)) +
+  labs(
+    x = "Year", 
+    y = "PCWD (mm)",
+    color = "Legend"
+  ) +
+  scale_color_manual(values = c("Russia 1850_AT" = "red", "Russia 1850" = "darkred","Algeria 1850_AT" = "deepskyblue", "Algeria 1850" = "deepskyblue4", "Antarctica 1850_AT" = "darkslategray4", "Antarctica 1850_AT" = "burlywood","Antarctica 1850" = "darkslategray", "Brazil 1850_AT" = "green", "Brazil 1850" = "darkgreen", "Czechia 1850_AT" = "yellow", "Czechia 1850" = "gold"))
+
+ggarrange(Russia,Brazil , Algeria, Czechia, Antarctica,
+                    ncol = 1, nrow = 5, common.legend = FALSE)
+
+```
+
+Focus in on Algeria
+```{r focus on Algeria}
+ggplot() +
+    geom_line(data = Algeria_AT_df, aes(x = time_AT, y = Algeria_1850_AT_30, color = "Algeria 1850_AT_30")) +
+    geom_line(data = Algeria_AT_df, aes(x = time_AT, y = Algeria_1850_AT, color = "Algeria 1850_AT")) +
+  theme_classic() +
+  ylim(0, max(Algeria_AT_df$Algeria_1850_AT_30)) +
+  xlim(min(Algeria_AT_df$time), max(Algeria_AT_df$time)) +
+  labs(
+    x = "Year", 
+    y = "PCWD(mm)",
+    color = "Legend"
+  ) +
+  scale_color_manual(values = c("Algeria 1850_AT" = "deepskyblue","Algeria 1850_AT_30" = "darkslategray", "Algeria 1850" = "deepskyblue4"))
+```
+
+```{r}
+#To save html markdown files: 
+#rmarkdown::render("vignettes/Spatial_maps_m001.Rmd")
+
+```
+
