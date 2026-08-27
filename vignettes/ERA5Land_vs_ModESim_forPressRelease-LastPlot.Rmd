@@ -3,15 +3,14 @@ title: "PCWD values from ModE-Sim vs ERA5Land output"
 author: "Patricia Helpap, Fabian Bernhard, Benjamin Stocker"
 date: "`r Sys.Date()`"
 output: html_document
+code-fold: true
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
-
 dir.create(here::here("figures"), showWarnings = FALSE)
 ```
 
-```{r libraries, message=FALSE, echo=FALSE}
+```{r libraries, message=FALSE, echo=FALSE, warning=FALSE}
 library(cowplot)
 library(dplyr)
 library(ggplot2)
@@ -131,7 +130,11 @@ prepare_region_data <- function(
 
 ```{r plot-helpers}
 get_pcwd_y_limits <- function(region_code, pcwd_values) {
-  upper_limit <- if (region_code == "CHE") 150 else 200
+  upper_limit <- if (region_code == "CHE") {
+    150
+  } else {
+    max(200, ceiling(max(pcwd_values, na.rm = TRUE) / 50) * 50)
+  }
   c(min(pcwd_values, na.rm = TRUE), upper_limit)
 }
 
@@ -140,6 +143,14 @@ get_pcwd_y_breaks <- function(region_code, y_limits) {
     seq(0, 150, by = 50)
   } else {
     pretty(y_limits, n = 6)
+  }
+}
+
+get_2026_reference_data <- function(region_code, pcwd_2026) {
+  if (region_code %in% c("WCE", "CHE")) {
+    tibble(pcwd = pcwd_2026)
+  } else {
+    tibble(pcwd = numeric())
   }
 }
 ```
@@ -160,9 +171,16 @@ plot_region_pcwd_ts <- function(region_code) {
       .groups = "drop"
     )
 
-  y_limits <- get_pcwd_y_limits(region_code, data$mode_long$PCWD)
+  y_limits <- get_pcwd_y_limits(
+    region_code,
+    c(data$mode_long$PCWD, data$era5_data$PCWD)
+  )
   common_breaks <- get_pcwd_y_breaks(region_code, y_limits)
   record_pcwd <- max(data$mode_long$PCWD, na.rm = TRUE)
+  reference_2026 <- get_2026_reference_data(
+    region_code,
+    data$pcwd_2026
+  )
 
   ggplot() +
     geom_line(
@@ -197,15 +215,16 @@ plot_region_pcwd_ts <- function(region_code) {
       linewidth = 0.4
     ) +
     geom_hline(
-      yintercept = data$pcwd_2026,
+      data = reference_2026,
+      aes(yintercept = pcwd),
+      inherit.aes = FALSE,
       color = "#B3001B",
       linewidth = 0.4
     ) +
-    annotate(
-      "text",
-      x = -Inf,
-      y = data$pcwd_2026,
-      label = "2026",
+    geom_text(
+      data = reference_2026,
+      aes(x = -Inf, y = pcwd, label = "2026"),
+      inherit.aes = FALSE,
       color = "#B3001B",
       size = 3,
       hjust = -0.2,
@@ -248,9 +267,16 @@ plot_region_pcwd_density <- function(
     era5_combined_26
   )
 
-  y_limits <- get_pcwd_y_limits(region_code, data$mode_long$PCWD)
+  y_limits <- get_pcwd_y_limits(
+    region_code,
+    c(data$mode_long$PCWD, data$era5_data$PCWD)
+  )
   common_breaks <- get_pcwd_y_breaks(region_code, y_limits)
   record_pcwd <- max(data$mode_long$PCWD, na.rm = TRUE)
+  reference_2026 <- get_2026_reference_data(
+    region_code,
+    data$pcwd_2026
+  )
 
   density_plot <- ggplot() +
     geom_density(
@@ -281,15 +307,16 @@ plot_region_pcwd_density <- function(
       linewidth = 0.4
     ) +
     geom_hline(
-      yintercept = data$pcwd_2026,
+      data = reference_2026,
+      aes(yintercept = pcwd),
+      inherit.aes = FALSE,
       color = "#B3001B",
       linewidth = 0.4
     ) +
-    annotate(
-      "text",
-      x = Inf,
-      y = data$pcwd_2026,
-      label = "2026",
+    geom_text(
+      data = reference_2026,
+      aes(x = Inf, y = pcwd, label = "2026"),
+      inherit.aes = FALSE,
       color = "#B3001B",
       size = 3,
       hjust = 1.2,
@@ -347,16 +374,19 @@ plot_region_pcwd_density <- function(
 ## Combine and save panels
 
 ```{r build-figure}
-region_codes <- c("WCE", "CHE")
+region_codes <- c("WCE", "CHE", "WNA")
 panel_labels <- c(
   "WCE – West Central Europe",
   "",
   "CHE – Switzerland",
+  "",
+  "WNA - Western North America",
   ""
 )
 region_titles <- c(
   WCE = "WCE – West Central Europe",
-  CHE = "CHE – Switzerland"
+  CHE = "CHE – Switzerland",
+  WNA = "WNA - Western North America"
 )
 
 build_pcwd_figure <- function(zoom = FALSE) {
@@ -462,6 +492,13 @@ save_pcwd_figure(
   "PCWD_CHE.pdf",
   height = 3
 )
+
+pcwd_figure_wna <- build_region_pcwd_figure("WNA")
+save_pcwd_figure(
+  pcwd_figure_wna,
+  "PCWD_WNA.pdf",
+  height = 3
+)
 ```
 
 ## Percentile of the 2026 PCWD
@@ -510,7 +547,7 @@ percentiles_2026 <- region_codes |>
 
 percentile_table <- percentiles_2026 |>
   transmute(
-    Region = recode(region, WCE = "West Central Europe", CHE = "Switzerland"),
+    Region = recode(region, WCE = "West Central Europe", CHE = "Switzerland", WNA = "Western North America"),
     Distribution = distribution,
     N = number_of_values,
     `2026 PCWD (mm)` = sprintf("%.1f", pcwd_2026_mm),
@@ -573,13 +610,18 @@ top_10_pcwd <- region_codes |>
 ```{r print-top-10-pcwd, results='asis'}
 region_names <- c(
   WCE = "West Central Europe",
-  CHE = "Switzerland"
+  CHE = "Switzerland",
+  WNA = "WNA - Western North America"
 )
 
 for (region_code in region_codes) {
   for (source in c("ERA5-Land", "ModE-Sim*")) {
     cat(
-      "### ", region_names[[region_code]], " - ", source, "\n\n",
+      "### ",
+      region_names[[region_code]],
+      " - ",
+      source,
+      "\n\n",
       sep = ""
     )
 
