@@ -19,7 +19,7 @@ and are already part of the repository.
 knitr::opts_chunk$set(echo = TRUE)
 
 # Define what to run:
-flag_only_run_CHregion <- TRUE  # if TRUE, only runs CH (and sub-sets of WCE), otherwise all regions (including CH)
+flag_only_run_CHregion <- FALSE  # if TRUE, only runs CH (and sub-sets of WCE), otherwise all regions (including CH)
 
 dir.create(here::here("figures/"))
 ```
@@ -114,11 +114,11 @@ if (flag_only_run_CHregion){
     purrr::keep_at(c("CHE","WCE_W","WCE_E","WCE")) # TODO: need to hardcode this
 } else {
   regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land_cons.RData")) |> #1950 - 2024
-    # ensure we remove empty regions (if still in data sets)
-    purrr::discard_at(c("BERN (25km)","Bern/Zollikofen"))
+    # ensure we remove empty regions (e.g. small countries)
+    purrr::discard(~all(is.na(.x)))
   incl26_regional_results_ERA5Land<- readRDS(here("data/regionalResults_ERA5Land_cons_25_26.RData")) |> #1950 - 2024
-    # ensure we remove empty regions (if still in data sets)
-    purrr::discard_at(c("BERN (25km)","Bern/Zollikofen"))
+    # ensure we remove empty regions (e.g. small countries)
+    purrr::discard(~all(is.na(.x)))
 }
 
 ### to exclude potential precipitation problems in ERA5-Land only include years from 1970s onwards
@@ -153,11 +153,11 @@ if (flag_only_run_CHregion){
     purrr::keep_at(c("CHE","WCE_W","WCE_E","WCE"))
 } else {
   regional_results_1420 <- readRDS(here("data/regionalResults_1420_1.RData")) |>
-    # ensure we remove empty regions (if still in data sets)
-    purrr::discard_at(c("BERN (25km)","Bern/Zollikofen"))
+    # ensure we remove empty regions (e.g. small countries)
+    purrr::discard(~all(is.na(.x)))
   regional_results_1850 <- readRDS(here("data/regionalResults_1850_1.RData")) |>
-    # ensure we remove empty regions (if still in data sets)
-    purrr::discard_at(c("BERN (25km)","Bern/Zollikofen"))
+    # ensure we remove empty regions (e.g. small countries)
+    purrr::discard(~all(is.na(.x)))
 }
 
 merged_results <- Map(rbind, regional_results_1420, regional_results_1850) # Stitch matrices together row-wise for each region
@@ -1642,7 +1642,8 @@ plot_region_PCWD_ts <- function(region_code) {
   return(p_ts)
 }
 
-ts_MED <- plot_region_PCWD_ts("WCE")
+# ts_MED <- plot_region_PCWD_ts("WCE")
+ts_MED <- plot_region_PCWD_ts("MED")
 ts_MED
 ```
 
@@ -1737,10 +1738,11 @@ plot_region_PCWD_density <- function(region_code) {
 }
 
 # TEST CASES:
+den_MED <- plot_region_PCWD_density("MED")
 # den_MED <- plot_region_PCWD_density("WCE")
 # den_MED <- plot_region_PCWD_density("CHE")
 # den_MED <- plot_region_PCWD_density("WCE_W")
-# den_MED
+den_MED
 ```
 
 # ######## New analysis for press release using sub regions (Eastern and Western part of WCE and Switzerland only) ######## ----
@@ -2521,6 +2523,8 @@ use_rp <- 30
 nyears <- 25
 path <- here::here("data/volc_impact_aggregates/collected_p_pet")
 folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}")
+stopifnot(length(folders)>0)
+
 n_ens <- unique(basename(folders))[1:20]
 n_ens <- paste0(n_ens, "_tidy")
 all_members <- n_ens
@@ -3873,6 +3877,7 @@ for (region in names(regional_results_ERA5Land_eva)) { #swap european_regions fo
 ##### ModE-Sim 
 path <- here::here("data/volc_impact_aggregates/collected_p_pet/")
 folders <- list.files(path, full.names = TRUE, pattern = "m[0-9]{3}") #m001 - m020 in first set
+stopifnot(length(folders)>0)
 
 # Extract unique ensemble member identifiers from folder names
 ensemble_member <- unique(basename(folders))[1:20]
